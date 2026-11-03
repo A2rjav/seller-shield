@@ -9,10 +9,11 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.4.0",
+    "@ai-sdk/google": "^4.0.111",
     "@paypal/agent-toolkit": "^1.11.0",
     "ag-grid-community": "^36.2.0",
     "ag-grid-react": "^36.2.0",
+    "ai": "^7.0.162",
     "drizzle-orm": "^0.45.4",
     "jose": "^6.2.15",
     "next": "15.5.28",
