@@ -18,6 +18,8 @@ export type CapturedOrder = {
   shipAddress: Address | null;
   amountCents: number;
   currency: string;
+  /** PayPal capture status, e.g. COMPLETED or PENDING. */
+  status?: string;
 };
 
 const CURRENCY = "USD";
@@ -36,7 +38,7 @@ type PpCaptureResponse = {
   payer?: { email_address?: string; payer_id?: string };
   purchase_units?: {
     shipping?: { name?: { full_name?: string }; address?: PpAddress };
-    payments?: { captures?: { id: string; amount?: { value: string; currency_code: string } }[] };
+    payments?: { captures?: { id: string; status?: string; amount?: { value: string; currency_code: string } }[] };
   }[];
 };
 
@@ -122,6 +124,7 @@ export function createOrdersApi(client: Pick<PaypalClient, "paypalFetch">) {
       shipAddress: mapAddress(pu?.shipping?.address),
       amountCents: toCents(cap.amount?.value ?? "0"),
       currency: cap.amount?.currency_code ?? CURRENCY,
+      ...(cap.status ? { status: cap.status } : {}),
     };
   }
 

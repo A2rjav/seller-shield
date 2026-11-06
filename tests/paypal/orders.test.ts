@@ -108,6 +108,7 @@ describe("captureOrder", () => {
       shipAddress: { line1: "1 Main St", line2: "Apt 2", city: "Austin", state: "TX", postalCode: "78701", countryCode: "US" },
       amountCents: 12000,
       currency: "USD",
+      status: "COMPLETED",
     });
     const cap = t.calls.find((c) => c.url.endsWith("/capture"))!;
     expect(cap.init.method).toBe("POST");
