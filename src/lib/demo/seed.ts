@@ -20,7 +20,8 @@ export type SeedDeps = {
   addTracking?: (input: AddTrackingInput) => Promise<void>;
   entries?: BaselineEntry[];
 };
-export type SeedResult = { seeded: number; warnings: string[] };
+/** `failures` counts orders that could not be seeded (PayPal or DB errors); a by-design skip (no mandate) is only a warning. */
+export type SeedResult = { seeded: number; failures: number; warnings: string[] };
 
 /** Null when it is safe to seed; otherwise why not. The dev PGlite fallback needs an explicit `--dev`. */
 export function seedModeError(env: Record<string, string | undefined>, dev: boolean): string | null {
@@ -29,6 +30,9 @@ export function seedModeError(env: Record<string, string | undefined>, dev: bool
   }
   return null;
 }
+
+/** Random 22-digit USPS-style test number, so a re-created unpushed shipment never reuses a number already on PayPal. */
+const freshTracking = () => `94${Array.from({ length: 20 }, () => Math.floor(Math.random() * 10)).join("")}`;
 
 const trackingFor = (orderId: string) => `JT${orderId.replace(/[^A-Za-z0-9]/g, "").slice(0, 16).toUpperCase()}`.padEnd(12, "0");
 
@@ -46,8 +50,15 @@ async function applyScenario(db: Db, entry: BaselineEntry, deps: SeedDeps, warni
   const { orderId, scenario } = entry;
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
   const carrier = scenario === "awaiting_delivery_850" ? "UPS" : "USPS";
-  const ship = async (shipTo?: Address) =>
-    (await currentShipment(db, orderId)) ?? (await addShipment(db, orderId, { carrier, trackingNumber: trackingFor(orderId), ...(shipTo ? { shipToAddress: shipTo } : {}) }));
+  // Scenario tracking numbers are made up by the demo, so these shipments stay flagged simulated.
+  const ship = async (shipTo?: Address) => {
+    const existing = await currentShipment(db, orderId);
+    if (existing) return existing;
+    const trackingNumber = scenario === "tracking_not_pushed" ? freshTracking() : trackingFor(orderId);
+    const added = await addShipment(db, orderId, { carrier, trackingNumber, ...(shipTo ? { shipToAddress: shipTo } : {}) });
+    const [row] = await db.update(shipments).set({ simulated: true }).where(eq(shipments.id, added.id)).returning();
+    return row;
+  };
   const push = async (s: { id: string; pushedToPaypal: boolean }) => {
     if (s.pushedToPaypal) return;
     try {
@@ -99,6 +110,7 @@ async function applyScenario(db: Db, entry: BaselineEntry, deps: SeedDeps, warni
 export async function seedDemo(db: Db, deps: SeedDeps): Promise<SeedResult> {
   const warnings: string[] = [];
   let seeded = 0;
+  let failures = 0;
   for (const entry of deps.entries ?? loadBaseline()) {
     const { orderId, scenario } = entry;
     try {
@@ -106,6 +118,7 @@ export async function seedDemo(db: Db, deps: SeedDeps): Promise<SeedResult> {
       const captured = mapCapturedOrder(res);
       if (!captured) {
         warnings.push(`${orderId}: PayPal returned no capture, skipped.`);
+        failures++;
         continue;
       }
       const [existing] = await db.select().from(orders).where(eq(orders.id, orderId));
@@ -133,7 +146,8 @@ export async function seedDemo(db: Db, deps: SeedDeps): Promise<SeedResult> {
       seeded++;
     } catch (e) {
       warnings.push(`${orderId}: ${e instanceof Error ? e.message : "seed failed"}`);
+      failures++;
     }
   }
-  return { seeded, warnings };
+  return { seeded, failures, warnings };
 }

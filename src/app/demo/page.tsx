@@ -96,6 +96,7 @@ export default async function DemoPage() {
           The <Link href="/dashboard" className={A}>orders dashboard</Link> shows each order&apos;s Seller Protection status and one-click fixes (push tracking, ship to the PayPal address).
           {atRisk ? <> Start with <Link href={`/dashboard/orders/${encodeURIComponent(atRisk.id)}`} className={A}>{atRisk.buyer}&apos;s order</Link>, which is at risk.</> : null}
         </p>
+        <p className="text-xs text-muted">Reset gives the tracking-not-pushed order a fresh test tracking number; earlier numbers stay on the PayPal sandbox order.</p>
         {undelivered.length > 0 ? (
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted">Shipped, not yet delivered</p>

@@ -1,7 +1,7 @@
-import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { cases, demoState, disputes, mandates, messages, orders, protectionChecks, shipments } from "@/lib/db/schema";
-import { loadBaseline } from "./baseline";
+import { loadBaseline, type BaselineEntry } from "./baseline";
 import { seedDemo, type SeedDeps, type SeedResult } from "./seed";
 
 const KEY = "last_reset";
@@ -35,10 +35,13 @@ const releaseClaim = (db: Db) =>
 
 export type ResetResult =
   | ({ ok: true; deleted: { orders: number; disputes: number } } & SeedResult)
-  | { ok: false; retryAfterSec: number };
+  | { ok: false; reason: "throttled"; retryAfterSec: number }
+  | { ok: false; reason: "seed_failed"; warnings: string[] };
 
 /** Deletes every local row a judge created (PayPal-side data is never touched) and resets the baseline orders' local scenario data. */
-async function wipeJudgeData(tx: Db, baseline: string[]) {
+async function wipeJudgeData(tx: Db, entries: BaselineEntry[]) {
+  const baseline = entries.map((e) => e.orderId);
+  const replaceShipment = entries.filter((e) => e.scenario === "tracking_not_pushed").map((e) => e.orderId);
   const allOrders = await tx.select({ id: orders.id, mandateId: orders.mandateId }).from(orders);
   const base = new Set(baseline);
   const judge = allOrders.filter((o) => !base.has(o.id)).map((o) => o.id);
@@ -67,22 +70,27 @@ async function wipeJudgeData(tx: Db, baseline: string[]) {
     await tx.delete(messages).where(and(inArray(messages.orderId, baseline), isNull(messages.disputeId)));
     await tx.delete(protectionChecks).where(inArray(protectionChecks.orderId, baseline));
     // Tracking already on PayPal stays (it is PayPal-side data); only its local delivery state is rewound.
-    await tx.delete(shipments).where(and(inArray(shipments.orderId, baseline), eq(shipments.pushedToPaypal, false)));
-    await tx
-      .update(shipments)
-      .set({ status: "in_transit", deliveredAt: null, simulated: false })
-      .where(inArray(shipments.orderId, baseline));
+    // The tracking_not_pushed order is different: its shipment is replaced (the seed adds a fresh unpushed one with a new
+    // test number), so the "push tracking" fix works for every judge. The earlier number stays on the PayPal sandbox order.
+    const unpushed = and(inArray(shipments.orderId, baseline), eq(shipments.pushedToPaypal, false));
+    await tx.delete(shipments).where(replaceShipment.length ? or(unpushed, inArray(shipments.orderId, replaceShipment)) : unpushed);
+    await tx.update(shipments).set({ status: "in_transit", deliveredAt: null }).where(inArray(shipments.orderId, baseline));
   }
   return { orders: judge.length, disputes: dIds.length };
 }
 
 /** Rate-limited (once per 2 minutes, globally) reset of the shared demo. Seed re-reads baseline orders from PayPal (GET only). */
 export async function resetDemo(db: Db, deps: SeedDeps): Promise<ResetResult> {
-  if (!(await claimReset(db))) return { ok: false, retryAfterSec: Math.max(1, await resetCooldownSec(db)) };
+  if (!(await claimReset(db))) return { ok: false, reason: "throttled", retryAfterSec: Math.max(1, await resetCooldownSec(db)) };
   try {
     const entries = deps.entries ?? loadBaseline();
-    const deleted = await db.transaction((tx) => wipeJudgeData(tx as unknown as Db, entries.map((e) => e.orderId)));
+    const deleted = await db.transaction((tx) => wipeJudgeData(tx as unknown as Db, entries));
     const seeded = await seedDemo(db, { ...deps, entries });
+    if (seeded.failures > 0) {
+      // The wipe is committed but some sample orders could not be reloaded: free the claim so the judge can retry now.
+      await releaseClaim(db);
+      return { ok: false, reason: "seed_failed", warnings: seeded.warnings };
+    }
     return { ok: true, deleted, ...seeded };
   } catch (e) {
     await releaseClaim(db).catch(() => {});

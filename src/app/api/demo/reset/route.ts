@@ -9,6 +9,12 @@ export const dynamic = "force-dynamic";
 export async function POST(): Promise<Response> {
   try {
     const r = await resetDemo(db, { getOrder });
+    if (!r.ok && r.reason === "seed_failed") {
+      return Response.json(
+        { error: "The reset could not reload the sample orders from PayPal. You can try again right now.", warnings: r.warnings },
+        { status: 503 },
+      );
+    }
     if (!r.ok) {
       return Response.json(
         { error: `The demo was reset very recently. Try again in ${r.retryAfterSec} seconds.`, retryAfterSec: r.retryAfterSec },
