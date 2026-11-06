@@ -107,9 +107,9 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
                     <span className="flex flex-wrap items-center gap-1.5">
                       <span>
                         {ship.carrier} <span className="font-mono text-xs">{ship.trackingNumber}</span> · {ship.status.replace("_", " ")}
-                        {ship.pushedToPaypal ? " · on PayPal" : " · not on PayPal"}
+                        {!ship.pushedToPaypal ? " · not on PayPal" : ship.pushSimulated ? " · Simulated push (not sent to PayPal)" : " · on PayPal"}
                       </span>
-                      {ship.simulated ? <SimulatedTag /> : null}
+                      {ship.simulated || ship.pushSimulated ? <SimulatedTag /> : null}
                     </span>
                   ) : (
                     "Not shipped yet"

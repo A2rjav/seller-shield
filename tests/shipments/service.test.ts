@@ -41,12 +41,12 @@ describe("shipments service", () => {
 
   it("addShipment keeps an explicit ship-to address", async () => {
     const other = { ...PAYPAL_ADDR, line1: "99 Other Rd" };
-    const s = await addShipment(db, "ORDER-1", { carrier: "UPS", trackingNumber: "1Z999", shipToAddress: other });
+    const s = await addShipment(db, "ORDER-1", { carrier: "UPS", trackingNumber: "1Z999AA10000001", shipToAddress: other });
     expect(s.shipToAddress).toEqual(other);
   });
 
   it("addShipment rejects an unknown order and a blank tracking number", async () => {
-    await expect(addShipment(db, "NOPE", { carrier: "USPS", trackingNumber: "1" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(addShipment(db, "NOPE", { carrier: "USPS", trackingNumber: "9400111899223" })).rejects.toMatchObject({ code: "not_found" });
     await expect(addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "  " })).rejects.toBeInstanceOf(ShipmentError);
     await expect(addShipment(db, "ORDER-1", { carrier: "", trackingNumber: "123" })).rejects.toMatchObject({ code: "invalid" });
   });

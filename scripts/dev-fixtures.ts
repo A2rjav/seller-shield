@@ -123,7 +123,7 @@ async function main() {
       const s = f.shipment;
       await db.insert(shipments).values({
         id: `shp_devfix_${f.id.slice(-4)}`, orderId: f.id, carrier: s.carrier, trackingNumber: s.tracking,
-        pushedToPaypal: s.pushed, pushedAt: s.pushed ? ago(f.daysAgo - 1) : null,
+        pushedToPaypal: s.pushed, pushedAt: s.pushed ? ago(f.daysAgo - 1) : null, pushSimulated: s.pushed, // fixtures never reach PayPal
         status: s.delivered ? "delivered" : "in_transit", deliveredAt: s.delivered ? ago(Math.max(0, f.daysAgo - 3)) : null,
         simulated: s.delivered, shipToAddress: s.shipTo ?? f.address,
       });

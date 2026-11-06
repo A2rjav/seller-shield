@@ -103,13 +103,16 @@ async function addOrderItems(db: Db, orderId: string, items: EvidenceItem[]) {
   const ships = await db.select().from(shipments).where(eq(shipments.orderId, o.id));
   for (const s of ships) {
     const source = s.simulated ? "demo_carrier" : "seller_shield";
-    const pushed = s.pushedToPaypal
-      ? `tracking pushed to PayPal ${day(s.pushedAt) ?? "(date not recorded)"}`
-      : "tracking not pushed to PayPal";
+    const pushed = !s.pushedToPaypal
+      ? "tracking not pushed to PayPal"
+      : s.pushSimulated
+        ? `Simulated push to PayPal ${day(s.pushedAt) ?? "(date not recorded)"} (not sent to PayPal)`
+        : `tracking pushed to PayPal ${day(s.pushedAt) ?? "(date not recorded)"}`;
     items.push({
-      id: `ev:tracking:${s.id}`, kind: "tracking", title: "Tracking", at: iso(s.pushedAt ?? o.createdAt), source, simulated: s.simulated,
+      id: `ev:tracking:${s.id}`, kind: "tracking", title: "Tracking", at: iso(s.pushedAt ?? o.createdAt), source,
+      simulated: s.simulated || (s.pushedToPaypal && s.pushSimulated),
       summary: `${s.carrier} tracking ${s.trackingNumber}, status ${s.status}; ${pushed}`,
-      data: { shipmentId: s.id, carrier: s.carrier, trackingNumber: s.trackingNumber, status: s.status, pushedToPaypal: s.pushedToPaypal, pushedAt: iso(s.pushedAt), signatureRequired: s.signatureRequired },
+      data: { shipmentId: s.id, carrier: s.carrier, trackingNumber: s.trackingNumber, status: s.status, pushedToPaypal: s.pushedToPaypal, pushSimulated: s.pushSimulated, pushedAt: iso(s.pushedAt), signatureRequired: s.signatureRequired },
     });
     if (s.status === "delivered" && s.deliveredAt) {
       const to = addrLine((s.shipToAddress ?? shipAddr) as Addr | null);

@@ -15,6 +15,13 @@
       "when": 1793949630924,
       "tag": "0001_sour_rocket_racer",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793954475669,
+      "tag": "0002_tricky_orphan",
+      "breakpoints": true
     }
   ]
 }

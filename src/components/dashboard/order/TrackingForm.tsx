@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-const CARRIERS = ["USPS", "UPS", "FEDEX", "DHL"];
+import { CARRIERS, TRACKING_NUMBER_RE } from "@/lib/shipments/carriers";
 
 /** Records a tracking number and sends it to PayPal in one step. */
 export default function TrackingForm({
@@ -12,7 +11,7 @@ export default function TrackingForm({
   orderId: string;
   onDone: (n: { tone: "success" | "error"; text: string }) => void;
 }) {
-  const [carrier, setCarrier] = useState("USPS");
+  const [carrier, setCarrier] = useState<string>(CARRIERS[0]);
   const [tracking, setTracking] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,8 +19,9 @@ export default function TrackingForm({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!/^[A-Za-z0-9 -]{4,64}$/.test(tracking.trim())) {
-      setError("Enter the tracking number from your label (4-64 letters or digits).");
+    const number = tracking.replace(/[\s-]+/g, "");
+    if (!TRACKING_NUMBER_RE.test(number)) {
+      setError("Enter the tracking number from your label: 8-40 letters or digits.");
       return;
     }
     setBusy(true);
@@ -29,7 +29,7 @@ export default function TrackingForm({
       const res = await fetch(`/api/orders/${encodeURIComponent(orderId)}/tracking`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ carrier, trackingNumber: tracking.trim() }),
+        body: JSON.stringify({ carrier, trackingNumber: number }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string; simulated?: boolean };
       if (!res.ok) {

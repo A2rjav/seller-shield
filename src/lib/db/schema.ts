@@ -1,4 +1,4 @@
-import { boolean, customType, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, customType, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 /** Always reads back as Uint8Array (PGlite returns Uint8Array, postgres-js a Buffer). */
 const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
@@ -26,19 +26,26 @@ export const orders = pgTable("orders", {
   raw: jsonb("raw"),
 });
 
-export const shipments = pgTable("shipments", {
-  id: text("id").primaryKey(),
-  orderId: text("order_id").notNull().references(() => orders.id),
-  carrier: text("carrier").notNull(),
-  trackingNumber: text("tracking_number").notNull(),
-  pushedToPaypal: boolean("pushed_to_paypal").notNull().default(false),
-  pushedAt: ts("pushed_at"),
-  signatureRequired: boolean("signature_required").notNull().default(false),
-  status: text("status", { enum: ["label", "in_transit", "delivered"] }).notNull().default("label"),
-  deliveredAt: ts("delivered_at"),
-  simulated: boolean("simulated").notNull().default(true),
-  shipToAddress: jsonb("ship_to_address"),
-});
+/** One shipment per order (unique order_id), so adding tracking is race-safe and an unpushed one can be replaced. */
+export const shipments = pgTable(
+  "shipments",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => orders.id),
+    carrier: text("carrier").notNull(),
+    trackingNumber: text("tracking_number").notNull(),
+    pushedToPaypal: boolean("pushed_to_paypal").notNull().default(false),
+    pushedAt: ts("pushed_at"),
+    /** True when the push never reached PayPal (local dev fixture orders); shown as "Simulated push". */
+    pushSimulated: boolean("push_simulated").notNull().default(false),
+    signatureRequired: boolean("signature_required").notNull().default(false),
+    status: text("status", { enum: ["label", "in_transit", "delivered"] }).notNull().default("label"),
+    deliveredAt: ts("delivered_at"),
+    simulated: boolean("simulated").notNull().default(true),
+    shipToAddress: jsonb("ship_to_address"),
+  },
+  (t) => [uniqueIndex("shipments_order_id_unique").on(t.orderId)],
+);
 
 export const messages = pgTable("messages", {
   id: text("id").primaryKey(),

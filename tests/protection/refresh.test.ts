@@ -58,7 +58,7 @@ describe("recomputeProtection", () => {
 
   it("flags a ship-to address that differs from the PayPal address", async () => {
     await seedOrder(db);
-    await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "1", shipToAddress: { ...ADDR, line1: "1 Elsewhere" } });
+    await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "9400111899223", shipToAddress: { ...ADDR, line1: "1 Elsewhere" } });
     const r = await recomputeProtection(db, "ORDER-1");
     expect(r?.gaps.find((g) => g.code === "address_mismatch")?.severity).toBe("high");
   });
@@ -81,7 +81,7 @@ describe("recomputeProtection", () => {
     await recomputeProtection(db, "ORDER-1");
     let [row] = await db.select().from(protectionChecks).where(eq(protectionChecks.orderId, "ORDER-1"));
     expect(row.explanation).toEqual(cached);
-    await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "1" });
+    await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "9400111899223" });
     await recomputeProtection(db, "ORDER-1");
     [row] = await db.select().from(protectionChecks).where(eq(protectionChecks.orderId, "ORDER-1"));
     expect(row.explanation).toBeNull();
@@ -125,7 +125,7 @@ describe("getOrderExplanation", () => {
   it("asks again after the gap set changes", async () => {
     const explain = vi.fn().mockResolvedValue(aiLines);
     await getOrderExplanation(db, "ORDER-1", { explain });
-    await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "1" });
+    await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "9400111899223" });
     await recomputeProtection(db, "ORDER-1");
     await getOrderExplanation(db, "ORDER-1", { explain });
     expect(explain).toHaveBeenCalledTimes(2);
@@ -151,7 +151,7 @@ describe("getOrderExplanation", () => {
   });
 
   it("makes no AI call for a protected order", async () => {
-    const s = await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "1" });
+    const s = await addShipment(db, "ORDER-1", { carrier: "USPS", trackingNumber: "9400111899223" });
     await pushTrackingToPaypal(db, s.id, { addTracking: push });
     await markDeliveredSimulated(db, s.id);
     await recomputeProtection(db, "ORDER-1");

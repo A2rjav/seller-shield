@@ -15,7 +15,7 @@ describe("dashboard queries", () => {
       { id: "A-1", source: "agent", status: "COMPLETED", amountCents: 4800, currency: "USD", buyerEmail: "b@x.test", shipAddress: ADDR, items: [], captureId: "C2", mandateId: "M1", raw: { devFixture: true }, createdAt: new Date("2026-11-02T00:00:00Z") },
     ]);
     await db.insert(mandates).values({ id: "M1", orderId: "A-1", payload: {}, shopperJws: "x", agentJws: "y", hash: "h", verified: false });
-    await addShipment(db, "H-1", { carrier: "USPS", trackingNumber: "9400" });
+    await addShipment(db, "H-1", { carrier: "USPS", trackingNumber: "9400111899223" });
     await recomputeProtection(db, "H-1");
     await recomputeProtection(db, "A-1");
     await db.insert(disputes).values({ id: "D1", orderId: "H-1", reason: "MERCHANDISE_OR_SERVICE_NOT_RECEIVED", status: "WAITING_FOR_SELLER_RESPONSE", stage: "INQUIRY", amountCents: 6000, currency: "USD", simulated: true });
