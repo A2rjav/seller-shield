@@ -1,1 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#d9dfe8"/><circle cx="200" cy="200" r="90" fill="none" stroke="#4a4a42" stroke-width="6"/><circle cx="200" cy="200" r="52" fill="none" stroke="#7a7a6c" stroke-width="3"/><text x="200" y="350" text-anchor="middle" font-family="Georgia,serif" font-size="20" fill="#4a4a42">moonstone-ring</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Moonstone stacking ring">
+  <defs>
+    <linearGradient id="m" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4f7fb"/><stop offset=".45" stop-color="#cfdcec"/><stop offset=".7" stop-color="#b9c8f0"/><stop offset="1" stop-color="#e7eef6"/></linearGradient>
+    <linearGradient id="s" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6c7579"/><stop offset=".5" stop-color="#c9ced0"/><stop offset="1" stop-color="#6c7579"/></linearGradient>
+  </defs>
+  <rect width="400" height="400" fill="#efe7d8"/>
+  <circle cx="200" cy="205" r="150" fill="#e8dfcd"/>
+  <ellipse cx="200" cy="250" rx="98" ry="42" fill="none" stroke="#7c8487" stroke-width="10"/>
+  <ellipse cx="200" cy="240" rx="98" ry="42" fill="none" stroke="url(#s)" stroke-width="10"/>
+  <path d="M168 205 Q200 186 232 205" fill="none" stroke="#7c8487" stroke-width="6"/>
+  <ellipse cx="200" cy="170" rx="36" ry="44" fill="url(#m)" stroke="#8d969a" stroke-width="5"/>
+  <path d="M184 150 q10 -16 26 -10" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" opacity=".9"/>
+  <path d="M190 186 q14 8 24 -6" fill="none" stroke="#9fb5e8" stroke-width="3" stroke-linecap="round" opacity=".8"/>
+  <g fill="#8d969a"><circle cx="168" cy="142" r="4"/><circle cx="232" cy="142" r="4"/><circle cx="168" cy="198" r="4"/><circle cx="232" cy="198" r="4"/></g>
+  <ellipse cx="200" cy="318" rx="100" ry="7" fill="#d9ceb9" opacity=".7"/>
+</svg>

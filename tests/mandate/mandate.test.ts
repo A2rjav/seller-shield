@@ -156,24 +156,26 @@ describe("mandate", () => {
     expect(r.failures.sort()).toEqual(["amount_over_max", "currency_mismatch", "expired", "item_not_in_mandate"]);
   });
 
+  type Loose = Record<string, unknown>;
+
   const signRaw = async (obj: unknown) => {
     const input = await build();
     return { input, jws: await signMandate(obj as MandatePayload, shopper.priv) };
   };
 
   it.each([
-    ["missing maxAmountCents", (p: any) => { delete p.maxAmountCents; }],
-    ["string maxAmountCents", (p: any) => { p.maxAmountCents = "6000"; }],
-    ["missing agentId", (p: any) => { delete p.agentId; }],
-    ["missing items", (p: any) => { delete p.items; }],
-    ["non-array items", (p: any) => { p.items = "ring"; }],
-    ["empty items", (p: any) => { p.items = []; }],
-    ["fractional mandate qty", (p: any) => { p.items = [{ sku: "ring-1", qty: 1.5 }]; }],
-    ["bad merchantId", (p: any) => { p.merchantId = "other"; }],
-    ["bad currency", (p: any) => { p.currency = "EUR"; }],
-    ["bad expiresAt", (p: any) => { p.expiresAt = "tomorrow"; }],
+    ["missing maxAmountCents", (p: Loose) => { delete p.maxAmountCents; }],
+    ["string maxAmountCents", (p: Loose) => { p.maxAmountCents = "6000"; }],
+    ["missing agentId", (p: Loose) => { delete p.agentId; }],
+    ["missing items", (p: Loose) => { delete p.items; }],
+    ["non-array items", (p: Loose) => { p.items = "ring"; }],
+    ["empty items", (p: Loose) => { p.items = []; }],
+    ["fractional mandate qty", (p: Loose) => { p.items = [{ sku: "ring-1", qty: 1.5 }]; }],
+    ["bad merchantId", (p: Loose) => { p.merchantId = "other"; }],
+    ["bad currency", (p: Loose) => { p.currency = "EUR"; }],
+    ["bad expiresAt", (p: Loose) => { p.expiresAt = "tomorrow"; }],
   ])("malformed_mandate: %s (signed but ill-shaped)", async (_n, mutate) => {
-    const p: any = payload();
+    const p = payload() as unknown as Loose;
     mutate(p);
     const { input, jws } = await signRaw(p);
     const r = await verifyMandate({ ...input, shopperJws: jws });
@@ -194,8 +196,8 @@ describe("mandate", () => {
     ["missing items", { amountCents: 5000, currency: "USD" }],
     ["empty currency", { items: order.items, amountCents: 5000, currency: "" }],
   ])("invalid_order: %s", async (_n, o) => {
-    const input = await build({ o: o as any });
-    const r = await verifyMandate({ ...input, order: o as any });
+    const input = await build({ o: o as never });
+    const r = await verifyMandate({ ...input, order: o as never });
     expect(r.verified).toBe(false);
     expect(r.failures).toContain("invalid_order");
     expect(r.failures).not.toContain("amount_over_max");
@@ -229,7 +231,7 @@ describe("mandate", () => {
   });
 
   it("never throws on garbage input", async () => {
-    const r = await verifyMandate({ shopperJws: 5, agentJws: null, agentPublicJwk: null, order: null, now: "x" } as any);
+    const r = await verifyMandate({ shopperJws: 5, agentJws: null, agentPublicJwk: null, order: null, now: "x" } as never);
     expect(r.verified).toBe(false);
   });
 

@@ -1,1 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#e6d9d9"/><circle cx="200" cy="200" r="90" fill="none" stroke="#4a4a42" stroke-width="6"/><circle cx="200" cy="200" r="52" fill="none" stroke="#7a7a6c" stroke-width="3"/><text x="200" y="350" text-anchor="middle" font-family="Georgia,serif" font-size="20" fill="#4a4a42">woven-cuff</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Woven thread cuff">
+  <defs>
+    <clipPath id="band"><path d="M70 170 A130 52 0 0 1 330 170 L330 230 A130 52 0 0 1 70 230 Z"/></clipPath>
+  </defs>
+  <rect width="400" height="400" fill="#efe7d8"/>
+  <circle cx="200" cy="200" r="150" fill="#e8dfcd"/>
+  <path d="M86 176 A116 40 0 0 1 314 176" fill="none" stroke="#c99a7e" stroke-width="10" opacity=".55"/>
+  <g clip-path="url(#band)">
+    <rect x="60" y="110" width="280" height="190" fill="#c4683f"/>
+    <g stroke="#e9b48f" stroke-width="5" opacity=".9">
+      <path d="M40 300 L160 110 M70 300 L190 110 M100 300 L220 110 M130 300 L250 110 M160 300 L280 110 M190 300 L310 110 M220 300 L340 110 M250 300 L370 110 M280 300 L400 110"/>
+    </g>
+    <g stroke="#8f3f20" stroke-width="5" opacity=".75">
+      <path d="M0 110 L120 300 M30 110 L150 300 M60 110 L180 300 M90 110 L210 300 M120 110 L240 300 M150 110 L270 300 M180 110 L300 300 M210 110 L330 300 M240 110 L360 300"/>
+    </g>
+  </g>
+  <path d="M70 170 A130 52 0 0 1 330 170 M70 230 A130 52 0 0 0 330 230" fill="none" stroke="#7a3518" stroke-width="3"/>
+  <rect x="186" y="262" width="28" height="30" rx="5" fill="#c9a24a" stroke="#8a6a23" stroke-width="3"/>
+  <circle cx="200" cy="277" r="5" fill="#8a6a23"/>
+  <ellipse cx="200" cy="330" rx="110" ry="7" fill="#d9ceb9" opacity=".7"/>
+</svg>

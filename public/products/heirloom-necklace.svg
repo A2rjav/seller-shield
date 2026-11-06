@@ -1,1 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#efe3c8"/><circle cx="200" cy="200" r="90" fill="none" stroke="#4a4a42" stroke-width="6"/><circle cx="200" cy="200" r="52" fill="none" stroke="#7a7a6c" stroke-width="3"/><text x="200" y="350" text-anchor="middle" font-family="Georgia,serif" font-size="20" fill="#4a4a42">heirloom-necklace</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Heirloom gold necklace with sapphire">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ead08a"/><stop offset=".5" stop-color="#c39a3e"/><stop offset="1" stop-color="#8f6a22"/></linearGradient>
+    <radialGradient id="sa" cx=".38" cy=".32" r=".75"><stop offset="0" stop-color="#7d9be0"/><stop offset=".55" stop-color="#22408f"/><stop offset="1" stop-color="#101f4d"/></radialGradient>
+  </defs>
+  <rect width="400" height="400" fill="#efe7d8"/>
+  <circle cx="200" cy="205" r="150" fill="#e8dfcd"/>
+  <path d="M60 50 C90 180 150 240 200 246 C250 240 310 180 340 50" fill="none" stroke="url(#g)" stroke-width="5" stroke-dasharray="9 5" stroke-linecap="round"/>
+  <path d="M60 50 C90 180 150 240 200 246 C250 240 310 180 340 50" fill="none" stroke="#f3e2b2" stroke-width="1.5" stroke-dasharray="9 5" opacity=".7"/>
+  <circle cx="200" cy="254" r="7" fill="none" stroke="url(#g)" stroke-width="4"/>
+  <path d="M200 262 L232 300 L200 346 L168 300 Z" fill="url(#g)"/>
+  <path d="M200 272 L222 300 L200 332 L178 300 Z" fill="url(#sa)"/>
+  <path d="M192 286 l8 -8 l6 7" fill="none" stroke="#c9d6f6" stroke-width="2.5" stroke-linecap="round" opacity=".85"/>
+  <ellipse cx="200" cy="362" rx="80" ry="6" fill="#d9ceb9" opacity=".7"/>
+</svg>

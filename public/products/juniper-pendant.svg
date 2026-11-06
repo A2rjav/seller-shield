@@ -1,1 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><rect width="400" height="400" fill="#dfe6d8"/><circle cx="200" cy="200" r="90" fill="none" stroke="#4a4a42" stroke-width="6"/><circle cx="200" cy="200" r="52" fill="none" stroke="#7a7a6c" stroke-width="3"/><text x="200" y="350" text-anchor="middle" font-family="Georgia,serif" font-size="20" fill="#4a4a42">juniper-pendant</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Juniper berry pendant">
+  <defs>
+    <radialGradient id="b" cx=".35" cy=".35" r=".7"><stop offset="0" stop-color="#8fa0c4"/><stop offset=".6" stop-color="#4c5d86"/><stop offset="1" stop-color="#2f3a5a"/></radialGradient>
+  </defs>
+  <rect width="400" height="400" fill="#efe7d8"/>
+  <circle cx="200" cy="215" r="150" fill="#e8dfcd"/>
+  <path d="M70 40 Q200 230 330 40" fill="none" stroke="#a46a3b" stroke-width="2.5" stroke-dasharray="5 4" stroke-linecap="round"/>
+  <circle cx="200" cy="148" r="7" fill="none" stroke="#a46a3b" stroke-width="3.5"/>
+  <g stroke="#8a5530" stroke-width="5" stroke-linecap="round" fill="none">
+    <path d="M200 156 C198 205 204 250 196 300"/>
+    <path d="M199 180 l-30 -14 M200 180 l30 -14 M199 205 l-36 -12 M201 205 l34 -16 M200 230 l-34 -10 M201 232 l32 -14 M199 256 l-28 -8 M199 258 l28 -12"/>
+  </g>
+  <g>
+    <circle cx="172" cy="282" r="15" fill="url(#b)"/>
+    <circle cx="214" cy="292" r="17" fill="url(#b)"/>
+    <circle cx="190" cy="314" r="14" fill="url(#b)"/>
+    <circle cx="167" cy="277" r="3.5" fill="#dfe6f3" opacity=".8"/>
+    <circle cx="208" cy="286" r="4" fill="#dfe6f3" opacity=".8"/>
+    <circle cx="185" cy="309" r="3" fill="#dfe6f3" opacity=".8"/>
+  </g>
+  <ellipse cx="200" cy="350" rx="90" ry="6" fill="#d9ceb9" opacity=".7"/>
+</svg>

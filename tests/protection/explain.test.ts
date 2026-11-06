@@ -76,6 +76,19 @@ describe("explainGaps", () => {
     expect(r.lines[0].text).toMatch(/no shipping address on file/);
     expect(r.lines[0].text).not.toMatch(/differs/);
   });
+  it("reports why it fell back: cap, error or an unusable answer", async () => {
+    ask.mockResolvedValueOnce({ ok: false, reason: "cap" });
+    expect((await explainGaps(result, order)).fallbackReason).toBe("cap");
+    ask.mockResolvedValueOnce({ ok: false, reason: "error" });
+    expect((await explainGaps(result, order)).fallbackReason).toBe("error");
+    ask.mockResolvedValueOnce({ ok: true, data: { lines: [] } });
+    expect((await explainGaps(result, order)).fallbackReason).toBe("invalid");
+    ask.mockResolvedValueOnce({
+      ok: true,
+      data: { lines: [{ code: "address_mismatch", text: "a" }, { code: "tracking_not_on_paypal", text: "b" }] },
+    });
+    expect((await explainGaps(result, order)).fallbackReason).toBeUndefined();
+  });
   it("every fallback is <= 25 words", () => {
     for (const t of Object.values(FALLBACK_TEXT)) expect(t.split(/\s+/).length).toBeLessThanOrEqual(25);
   });

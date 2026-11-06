@@ -30,7 +30,52 @@ body {
   font-family: var(--font-sans);
 }
 
+/* @theme inline does not emit --font-display at runtime, so reference the next/font variable directly. */
 .font-display {
-  font-family: var(--font-display);
+  font-family: var(--font-fraunces), Georgia, serif;
   font-optical-sizing: auto;
+}
+
+/* Seller Shield dashboard: white cards on a soft cream app background. */
+.app-shell {
+  background: #f5f0e6;
+}
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #efe8da 0px, #f8f4ec 160px, #efe8da 320px);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* AG Grid cells: centre content vertically without the row-height line-height (custom renderers wrap text). */
+.ag-cell.ss-cell {
+  display: flex;
+  align-items: center;
+  line-height: 1.35;
+}
+.ag-cell.ss-cell > * {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.ag-cell.ss-cell.ss-right {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+/* Let the AG Grid pagination bar wrap on narrow screens instead of clipping. */
+.ag-paging-panel {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 48px;
+  row-gap: 4px;
+  padding-block: 6px;
 }

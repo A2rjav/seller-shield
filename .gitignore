@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local dev database (PGlite fallback when DATABASE_URL is empty)
+.data/

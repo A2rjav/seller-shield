@@ -23,6 +23,15 @@ export type ExplainOrder = {
   shipToAddress: Address | null;
 };
 
+/** Why standard text was used: the daily AI cap, an AI error, or an unusable answer. Absent when AI text was used. */
+export type FallbackReason = "cap" | "error" | "invalid";
+
+export type ExplainResult = {
+  lines: { code: GapCode; text: string }[];
+  usedFallback: boolean;
+  fallbackReason?: FallbackReason;
+};
+
 const schema = z.object({ lines: z.array(z.object({ code: z.string(), text: z.string() })) });
 const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 const place = (a: Address | null) => (a ? `${a.city}, ${a.state}` : "unknown");
@@ -30,7 +39,7 @@ const place = (a: Address | null) => (a ? `${a.city}, ${a.state}` : "unknown");
 export async function explainGaps(
   result: ProtectionResult,
   order: ExplainOrder,
-): Promise<{ lines: { code: GapCode; text: string }[]; usedFallback: boolean }> {
+): Promise<ExplainResult> {
   const gaps = result.gaps;
   if (gaps.length === 0) return { lines: [], usedFallback: false };
 
@@ -64,5 +73,6 @@ export async function explainGaps(
     const text = g.code === "address_mismatch" && !order.paypalShipAddress ? NO_PAYPAL_ADDRESS_TEXT : FALLBACK_TEXT[g.code];
     return { code: g.code, text };
   });
-  return { lines, usedFallback };
+  if (!usedFallback) return { lines, usedFallback };
+  return { lines, usedFallback, fallbackReason: res.ok ? "invalid" : res.reason };
 }
