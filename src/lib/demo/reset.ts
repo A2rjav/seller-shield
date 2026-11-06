@@ -38,17 +38,23 @@ export type ResetResult =
   | { ok: false; reason: "throttled"; retryAfterSec: number }
   | { ok: false; reason: "seed_failed"; warnings: string[] };
 
-/** Deletes every local row a judge created (PayPal-side data is never touched) and resets the baseline orders' local scenario data. */
+/**
+ * Deletes every local row a judge created (PayPal-side data is never touched) and resets the baseline orders' local scenario data.
+ * Exception: a judge order with a real (non-simulated) PayPal dispute is kept with all its rows, because the poller would bring
+ * that dispute back unlinked forever. Only its simulated disputes are cleared.
+ */
 async function wipeJudgeData(tx: Db, entries: BaselineEntry[]) {
   const baseline = entries.map((e) => e.orderId);
   const replaceShipment = entries.filter((e) => e.scenario === "tracking_not_pushed").map((e) => e.orderId);
   const allOrders = await tx.select({ id: orders.id, mandateId: orders.mandateId }).from(orders);
   const base = new Set(baseline);
-  const judge = allOrders.filter((o) => !base.has(o.id)).map((o) => o.id);
-  const judgeSet = new Set(judge);
-  const keepMandates = allOrders.filter((o) => base.has(o.id) && o.mandateId).map((o) => o.mandateId as string);
-
   const ds = await tx.select({ id: disputes.id, orderId: disputes.orderId, simulated: disputes.simulated }).from(disputes);
+  const withRealDispute = new Set(ds.filter((d) => !d.simulated && d.orderId !== null).map((d) => d.orderId as string));
+  const kept = new Set([...base, ...withRealDispute]);
+  const judge = allOrders.filter((o) => !kept.has(o.id)).map((o) => o.id);
+  const judgeSet = new Set(judge);
+  const keepMandates = allOrders.filter((o) => kept.has(o.id) && o.mandateId).map((o) => o.mandateId as string);
+
   const dIds = ds.filter((d) => d.simulated || (d.orderId !== null && judgeSet.has(d.orderId))).map((d) => d.id);
   if (dIds.length) {
     await tx.delete(cases).where(inArray(cases.disputeId, dIds));

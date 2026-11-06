@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { createTestDb } from "../helpers/testDb";
 import { fakePaypal, insertMandate } from "./helpers";
 import type { Db } from "@/lib/db/client";
-import { demoState, disputes, mandates, messages, orders, protectionChecks, shipments } from "@/lib/db/schema";
+import { cases, demoState, disputes, mandates, messages, orders, protectionChecks, shipments } from "@/lib/db/schema";
 import { resetCooldownSec, resetDemo } from "@/lib/demo/reset";
 import { createSimulatedDispute } from "@/lib/demo/simulate";
 import { seedDemo, type BaselineEntry } from "@/lib/demo/seed";
@@ -54,6 +54,39 @@ describe("resetDemo", () => {
     // PayPal untouched: only the seed's getOrder reads, no tracking pushes (already on PayPal)
     expect(pp.calls.every((c) => c.startsWith("getOrder:"))).toBe(true);
     expect(pp.calls.length).toBe(ENTRIES.length);
+  });
+
+  it("keeps a judge order that has a real PayPal dispute, with its rows; only its simulated items go (I5)", async () => {
+    await judgeActivity(db); // J-1: judge order with only a simulated dispute -> deleted
+    await db.insert(orders).values({ id: "J-REAL", source: "agent", status: "COMPLETED", amountCents: 7000, currency: "USD", items: [], captureId: "CAP-JR", mandateId: "mdt_real" });
+    const ship = await addShipment(db, "J-REAL", { carrier: "USPS", trackingNumber: "940011189922399" });
+    await db.insert(protectionChecks).values({ orderId: "J-REAL", result: {} });
+    await db.insert(messages).values({ id: "m-jr", orderId: "J-REAL", author: "buyer", source: "storefront", body: "where is it" });
+    await insertMandate(db, "mdt_real", "J-REAL");
+    await db.insert(disputes).values({
+      id: "PP-D-REAL", orderId: "J-REAL", reason: "MERCHANDISE_OR_SERVICE_NOT_RECEIVED", status: "WAITING_FOR_SELLER_RESPONSE",
+      stage: "INQUIRY", amountCents: 7000, currency: "USD", simulated: false,
+    });
+    await db.insert(cases).values({ id: "case:PP-D-REAL", disputeId: "PP-D-REAL", draft: { summary: "", timeline: [], argument: [] } });
+    await db.insert(messages).values({ id: "m-dr", orderId: "J-REAL", disputeId: "PP-D-REAL", author: "buyer", source: "paypal", body: "never came" });
+    const sim = await createSimulatedDispute(db, "J-REAL", "UNAUTHORISED");
+
+    const r = await resetDemo(db, { getOrder: pp.getOrder, addTracking: pp.addTracking, entries: ENTRIES });
+    expect(r.ok).toBe(true);
+    // The order and everything the real dispute relies on stay linked.
+    expect(await db.select().from(orders).where(eq(orders.id, "J-REAL"))).toHaveLength(1);
+    expect(await db.select().from(shipments).where(eq(shipments.id, ship.id))).toHaveLength(1);
+    expect(await db.select().from(mandates).where(eq(mandates.id, "mdt_real"))).toHaveLength(1);
+    expect(await db.select().from(protectionChecks).where(eq(protectionChecks.orderId, "J-REAL"))).toHaveLength(1);
+    expect(await db.select().from(messages).where(eq(messages.id, "m-jr"))).toHaveLength(1);
+    expect(await db.select().from(messages).where(eq(messages.id, "m-dr"))).toHaveLength(1);
+    const [real] = await db.select().from(disputes).where(eq(disputes.id, "PP-D-REAL"));
+    expect(real.orderId).toBe("J-REAL");
+    expect(await db.select().from(cases).where(eq(cases.disputeId, "PP-D-REAL"))).toHaveLength(1);
+    // Its simulated dispute is cleared; judge orders without a real dispute are still deleted.
+    expect(await db.select().from(disputes).where(eq(disputes.id, sim.id))).toHaveLength(0);
+    expect(await db.select().from(orders).where(eq(orders.id, "J-1"))).toHaveLength(0);
+    if (r.ok) expect(r.deleted.orders).toBe(1);
   });
 
   it("restores a baseline order's scenario state after a judge changed it", async () => {
