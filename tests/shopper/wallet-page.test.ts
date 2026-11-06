@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { isValidElement } from "react";
+
+// The client component is never rendered here; keep Next's router (a large module graph) out of the worker.
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
 import WalletPage, { dynamic } from "@/app/(shopper)/wallet/page";
 import WalletClient, { WALLET_EMAIL_HINT } from "@/app/(shopper)/wallet/WalletClient";
 
