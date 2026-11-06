@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestDb } from "../helpers/testDb";
 import { mandates, orders } from "@/lib/db/schema";
 import { captureAndRecord } from "@/lib/orders/capture";
+import { PaypalError } from "@/lib/paypal/client";
 
 const addr = { line1: "1 Main", city: "Portland", state: "OR", postalCode: "97201", countryCode: "US" };
 const ppOrder = {
@@ -32,5 +33,34 @@ describe("captureAndRecord", () => {
     const o = await captureAndRecord(db, "O2", deps);
     expect(o.source).toBe("agent");
     expect(o.mandateId).toBe("m-9");
+  });
+});
+
+describe("captureAndRecord recovery", () => {
+  const withCapture = {
+    payer: { email_address: "b@example.com", payer_id: "P1" },
+    purchase_units: [{
+      items: ppOrder.purchase_units[0].items,
+      payments: { captures: [{ id: "C1", status: "COMPLETED", amount: { value: "120.00", currency_code: "USD" } }] },
+    }],
+  };
+
+  it("capture throws ORDER_ALREADY_CAPTURED and PayPal holds a capture -> recorded and returned", async () => {
+    const db = await createTestDb();
+    const err = new PaypalError({ status: 422, name: "UNPROCESSABLE_ENTITY", details: [{ issue: "ORDER_ALREADY_CAPTURED" }] });
+    const deps = { getOrder: vi.fn().mockResolvedValueOnce(ppOrder).mockResolvedValueOnce(withCapture), captureOrder: vi.fn().mockRejectedValue(err) };
+    const o = await captureAndRecord(db, "O3", deps);
+    expect(o.status).toBe("COMPLETED");
+    expect(o.captureId).toBe("C1");
+    expect(o.amountCents).toBe(12000);
+    expect(await db.select().from(orders)).toHaveLength(1);
+  });
+
+  it("capture throws and PayPal has no capture -> error propagates, nothing recorded", async () => {
+    const db = await createTestDb();
+    const err = new PaypalError({ status: 422, name: "UNPROCESSABLE_ENTITY" });
+    const deps = { getOrder: vi.fn().mockResolvedValue(ppOrder), captureOrder: vi.fn().mockRejectedValue(err) };
+    await expect(captureAndRecord(db, "O4", deps)).rejects.toBe(err);
+    expect(await db.select().from(orders)).toHaveLength(0);
   });
 });

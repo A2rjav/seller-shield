@@ -55,6 +55,37 @@ function mapAddress(a: PpAddress | undefined): Address | null {
   return out;
 }
 
+/** Maps a PayPal order/capture response to CapturedOrder; null when it holds no capture. Shared by capture and recovery. */
+export function mapCapturedOrder(res: unknown): CapturedOrder | null {
+  const r = res as PpCaptureResponse;
+  const pu = r.purchase_units?.[0];
+  const cap = pu?.payments?.captures?.[0];
+  if (!cap) return null;
+  return {
+    captureId: cap.id,
+    payerEmail: r.payer?.email_address ?? "",
+    payerId: r.payer?.payer_id ?? "",
+    shipName: pu?.shipping?.name?.full_name ?? null,
+    shipAddress: mapAddress(pu?.shipping?.address),
+    amountCents: toCents(cap.amount?.value ?? "0"),
+    currency: cap.amount?.currency_code ?? CURRENCY,
+    ...(cap.status ? { status: cap.status } : {}),
+  };
+}
+
+/** Line items of a PayPal order, with amounts converted to cents. */
+export function mapOrderItems(res: unknown): { sku: string; name: string; qty: number; priceCents: number }[] {
+  const list =
+    (res as { purchase_units?: { items?: { name?: string; sku?: string; quantity?: string; unit_amount?: { value?: string } }[] }[] })
+      .purchase_units?.[0]?.items ?? [];
+  return list.map((i) => ({
+    sku: i.sku ?? "",
+    name: i.name ?? i.sku ?? "Item",
+    qty: Number.parseInt(i.quantity ?? "1", 10) || 1,
+    priceCents: toCents(i.unit_amount?.value ?? "0"),
+  }));
+}
+
 export function createOrdersApi(client: Pick<PaypalClient, "paypalFetch">) {
   async function createOrder(input: CreateOrderInput): Promise<{ id: string; approveUrl: string }> {
     if (input.items.length === 0) throw new Error("Order must contain at least one item");
@@ -113,19 +144,9 @@ export function createOrdersApi(client: Pick<PaypalClient, "paypalFetch">) {
       body: {},
       requestId: `capture-${id}`, // stable per order so a retried capture is idempotent
     });
-    const pu = res.purchase_units?.[0];
-    const cap = pu?.payments?.captures?.[0];
-    if (!cap) throw new Error(`PayPal order ${id} capture response has no capture`);
-    return {
-      captureId: cap.id,
-      payerEmail: res.payer?.email_address ?? "",
-      payerId: res.payer?.payer_id ?? "",
-      shipName: pu?.shipping?.name?.full_name ?? null,
-      shipAddress: mapAddress(pu?.shipping?.address),
-      amountCents: toCents(cap.amount?.value ?? "0"),
-      currency: cap.amount?.currency_code ?? CURRENCY,
-      ...(cap.status ? { status: cap.status } : {}),
-    };
+    const mapped = mapCapturedOrder(res);
+    if (!mapped) throw new Error(`PayPal order ${id} capture response has no capture`);
+    return mapped;
   }
 
   async function getOrder(id: string): Promise<unknown> {

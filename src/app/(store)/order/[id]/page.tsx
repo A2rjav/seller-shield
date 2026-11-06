@@ -4,6 +4,7 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { messages, orders } from "@/lib/db/schema";
 import { formatMoney } from "@/lib/format";
+import { statusCopy } from "@/lib/orders/status-copy";
 import type { OrderItem } from "@/lib/orders/record";
 
 export const dynamic = "force-dynamic";
@@ -16,14 +17,23 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
 
   const items = order.items as OrderItem[];
   const addr = order.shipAddress as { city?: string; state?: string } | null;
-  const completed = order.status === "COMPLETED";
+  const copy = statusCopy(order.status);
+  const firstSku = items[0]?.sku;
 
   return (
     <div className="max-w-2xl">
-      <p className="text-xs uppercase tracking-[0.22em] text-accent">{completed ? "Order confirmed" : "Payment pending"}</p>
+      <p className="text-xs uppercase tracking-[0.22em] text-accent">{copy.eyebrow}</p>
       <h1 className="mt-3 font-display text-3xl text-green sm:text-4xl">
-        {completed ? "Thank you. Maya will pack this by hand." : "Thank you. Your payment is being confirmed."}
+        {copy.headline}
       </h1>
+      {copy.detail && (
+        <p role="alert" className="mt-3 text-muted">
+          {copy.detail}{" "}
+          <Link href={firstSku ? `/product/${firstSku}` : "/"} className="text-accent underline">
+            Back to the product
+          </Link>
+        </p>
+      )}
       <p className="mt-3 text-sm text-muted">
         Order <span className="font-mono">{order.id}</span> &middot; Status{" "}
         <span className="rounded-sm border border-line bg-card px-2 py-0.5 font-medium text-foreground">{order.status}</span>
