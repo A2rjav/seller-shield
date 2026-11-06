@@ -6,11 +6,15 @@ import type { GapCode, ProtectionResult } from "./rules";
 export const FALLBACK_TEXT: Record<GapCode, string> = {
   address_mismatch: "The address you are shipping to differs from the one PayPal has. Ship to the PayPal address to stay covered.",
   no_tracking: "This order has no tracking number yet. Ship it with a trackable service and add the number.",
-  tracking_not_on_paypal: "Your tracking number has not been added to PayPal yet. Send it to PayPal so delivery can be proven.",
-  signature_required_over_threshold: "This order is large enough that PayPal expects a signature on delivery. Ship it with signature confirmation.",
-  non_physical_item: "This order includes a service or digital item. PayPal Seller Protection only covers physical goods.",
+  tracking_not_on_paypal: "Your tracking number has not been added to PayPal yet. Send it to PayPal so shipment can be proven.",
+  no_delivery_confirmation: "The carrier has not marked this order delivered yet. Delivered status and date are needed if the buyer says it never arrived.",
+  over_protection_cap: "This order is over PayPal's $10,000 Seller Protection limit, so it is generally not covered. Consider splitting it.",
+  intangible_needs_proof: "Services and digital items are covered only with strong proof of delivery. Keep records of what was sent, when, and to whom.",
   agent_mandate_missing_or_failed: "An AI agent placed this order, but its permission from the buyer is missing or failed checks. Review it before shipping.",
 };
+
+const NO_PAYPAL_ADDRESS_TEXT =
+  "PayPal has no shipping address on file for this order, so we cannot confirm your ship-to address matches. Check the order in PayPal.";
 
 export type ExplainOrder = {
   amountCents: number;
@@ -57,7 +61,8 @@ export async function explainGaps(
     const t = byCode.get(g.code);
     if (t) return { code: g.code, text: t };
     usedFallback = true;
-    return { code: g.code, text: FALLBACK_TEXT[g.code] };
+    const text = g.code === "address_mismatch" && !order.paypalShipAddress ? NO_PAYPAL_ADDRESS_TEXT : FALLBACK_TEXT[g.code];
+    return { code: g.code, text };
   });
   return { lines, usedFallback };
 }

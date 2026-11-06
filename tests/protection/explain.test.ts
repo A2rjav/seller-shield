@@ -15,8 +15,8 @@ const order = {
 const result: ProtectionResult = {
   status: "at_risk",
   gaps: [
-    { code: "address_mismatch", severity: "high", fix: "ship_to_paypal_address" },
-    { code: "tracking_not_on_paypal", severity: "high", fix: "push_tracking" },
+    { code: "address_mismatch", severity: "high", fix: "ship_to_paypal_address", basis: "paypal_policy" },
+    { code: "tracking_not_on_paypal", severity: "medium", fix: "push_tracking", basis: "seller_shield" },
   ],
 };
 
@@ -66,6 +66,15 @@ describe("explainGaps", () => {
     });
     const r = await explainGaps(result, order);
     expect(r.lines[0].text).toBe(FALLBACK_TEXT.address_mismatch);
+  });
+  it("address_mismatch fallback says no address on file when PayPal address is missing", async () => {
+    ask.mockResolvedValueOnce({ ok: false, reason: "cap" });
+    const r = await explainGaps(
+      { status: "pending", gaps: [{ code: "address_mismatch", severity: "medium", fix: null, basis: "paypal_policy" }] },
+      { ...order, paypalShipAddress: null },
+    );
+    expect(r.lines[0].text).toMatch(/no shipping address on file/);
+    expect(r.lines[0].text).not.toMatch(/differs/);
   });
   it("every fallback is <= 25 words", () => {
     for (const t of Object.values(FALLBACK_TEXT)) expect(t.split(/\s+/).length).toBeLessThanOrEqual(25);
