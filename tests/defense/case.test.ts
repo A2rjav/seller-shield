@@ -68,6 +68,20 @@ describe("validateClaims", () => {
     }
   });
 
+  it("ordinary words before a number are not read as dates", () => {
+    for (const text of ["We marked 2 attempts.", "The buyer decided 3 times.", "It may 2 days late.", "Please separate 4 boxes."]) {
+      const d = { ...good, argument: [{ text, evidenceIds: ["ev:delivery:S1"] }] };
+      expect(validateClaims(d, folder), text).toEqual({ ok: true, problems: [] });
+    }
+  });
+
+  it("still extracts Nov 12, november 12th and May 5, 2026 (fabricated ones are caught)", () => {
+    for (const text of ["Delivered Nov 12.", "Delivered november 12th.", "Delivered May 5, 2026.", "Delivered may 5th.", "Delivered 5 May 2026."]) {
+      const d = { ...good, argument: [{ text, evidenceIds: ["ev:delivery:S1"] }] };
+      expect(validateClaims(d, folder).ok, text).toBe(false);
+    }
+  });
+
   it("accepts US and month-name dates that match a cited ISO date", () => {
     const d = { ...good, argument: [{ text: "Delivered Nov 9, 2026 (11/9/2026).", evidenceIds: ["ev:delivery:S1"] }] };
     expect(validateClaims(d, folder).ok).toBe(true);

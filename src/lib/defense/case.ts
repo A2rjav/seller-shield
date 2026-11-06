@@ -18,7 +18,16 @@ export const caseDraftSchema: z.ZodType<CaseDraft> = z.object({
 
 // ---- Claim extraction ----
 
-const MONTH_NAMES = "(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
+// Full month names or standard abbreviations only (never "any word starting with mar/dec/..."), so ordinary
+// words ("marked 2", "decided 3", "separate 4") are not read as dates. "May" is also an ordinary word, so
+// capitalised "May" always counts, and lowercase "may" only when the surrounding text reads as a date.
+// Case-insensitivity is spelled out per letter (no `i` flag) because "May" must stay case-sensitive.
+const ci = (src: string) => src.replace(/[A-Za-z]/g, (c) => `[${c.toUpperCase()}${c.toLowerCase()}]`);
+const OTHER_MONTHS = ci("Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?");
+/** Month before the day: "Nov 12", "May 5, 2026", "may 5th". */
+const MONTH_FIRST = String.raw`(${OTHER_MONTHS}|May|MAY|may(?=\s+\d{1,2}(?:st|nd|rd|th|\s*,|\s+\d{4}\b)))\b\.?`;
+/** Month after the day: "12 Nov", "5 May 2026". */
+const MONTH_AFTER = String.raw`(${OTHER_MONTHS}|May|MAY|may(?=,?\s+\d{4}\b))\b\.?`;
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const pad = (n: number | string) => String(n).padStart(2, "0");
 const monthNo = (name: string) => MONTHS.indexOf(name.slice(0, 3).toLowerCase()) + 1;
@@ -37,13 +46,13 @@ const FULL_RES: { re: RegExp; iso: (m: RegExpMatchArray) => string }[] = [
   { re: /\b(\d{4})-(\d{2})-(\d{2})/g, iso: (m) => `${m[1]}-${m[2]}-${m[3]}` },
   { re: /\b(\d{4})\/(\d{1,2})\/(\d{1,2})\b/g, iso: (m) => `${m[1]}-${pad(m[2])}-${pad(m[3])}` },
   { re: /(?<![\d/])(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, iso: (m) => `${fullYear(m[3])}-${pad(m[1])}-${pad(m[2])}` },
-  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b`, "gi"), iso: (m) => `${m[3]}-${pad(monthNo(m[1]))}-${pad(m[2])}` },
-  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\.?,?\s+(\d{4})\b`, "gi"), iso: (m) => `${m[3]}-${pad(monthNo(m[2]))}-${pad(m[1])}` },
+  { re: new RegExp(String.raw`\b${MONTH_FIRST}\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b`, "g"), iso: (m) => `${m[3]}-${pad(monthNo(m[1]))}-${pad(m[2])}` },
+  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_AFTER},?\s+(\d{4})\b`, "g"), iso: (m) => `${m[3]}-${pad(monthNo(m[2]))}-${pad(m[1])}` },
 ];
 // Year-less forms are compared on month-day only.
 const MD_RES: { re: RegExp; md: (m: RegExpMatchArray) => [number, number] }[] = [
-  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b`, "gi"), md: (m) => [monthNo(m[1]), Number(m[2])] },
-  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\b`, "gi"), md: (m) => [monthNo(m[2]), Number(m[1])] },
+  { re: new RegExp(String.raw`\b${MONTH_FIRST}\s+(\d{1,2})(?:st|nd|rd|th)?\b`, "g"), md: (m) => [monthNo(m[1]), Number(m[2])] },
+  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_AFTER}`, "g"), md: (m) => [monthNo(m[2]), Number(m[1])] },
   { re: /(?<![\d/.:-])(\d{1,2})\/(\d{1,2})(?![\d/])/g, md: (m) => [Number(m[1]), Number(m[2])] },
 ];
 const TOKEN_RE = /\b[A-Za-z0-9]{10,}\b/g;
