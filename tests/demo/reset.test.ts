@@ -68,7 +68,7 @@ describe("resetDemo", () => {
       stage: "INQUIRY", amountCents: 7000, currency: "USD", simulated: false,
     });
     await db.insert(cases).values({ id: "case:PP-D-REAL", disputeId: "PP-D-REAL", draft: { summary: "", timeline: [], argument: [] } });
-    await db.insert(messages).values({ id: "m-dr", orderId: "J-REAL", disputeId: "PP-D-REAL", author: "buyer", source: "paypal", body: "never came" });
+    await db.insert(messages).values({ id: "m-dr", orderId: "J-REAL", disputeId: "PP-D-REAL", author: "buyer", source: "paypal_dispute", body: "never came" });
     const sim = await createSimulatedDispute(db, "J-REAL", "UNAUTHORISED");
 
     const r = await resetDemo(db, { getOrder: pp.getOrder, addTracking: pp.addTracking, entries: ENTRIES });

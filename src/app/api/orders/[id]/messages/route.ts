@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db/client";
 import { messages, orders } from "@/lib/db/schema";
@@ -6,6 +6,9 @@ import { messages, orders } from "@/lib/db/schema";
 export const dynamic = "force-dynamic";
 
 const body = z.object({ body: z.string().trim().min(1).max(2000) });
+
+/** Shared demo: one order cannot be flooded with messages. */
+const MAX_MESSAGES_PER_ORDER = 20;
 
 /** Stores a buyer message from the storefront. Accepts JSON or a plain form post (then redirects back). */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
@@ -17,6 +20,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const [order] = await db.select({ id: orders.id }).from(orders).where(eq(orders.id, id));
   if (!order) return Response.json({ error: "Order not found" }, { status: 404 });
+
+  const [{ n }] = await db.select({ n: count() }).from(messages).where(eq(messages.orderId, id));
+  if (n >= MAX_MESSAGES_PER_ORDER) {
+    return Response.json({ error: `This order already has ${MAX_MESSAGES_PER_ORDER} messages, the most it can hold.` }, { status: 409 });
+  }
 
   await db.insert(messages).values({
     id: crypto.randomUUID(),

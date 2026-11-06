@@ -83,6 +83,21 @@ export function getAiConfig(source: Record<string, string | undefined> = process
   return { apiKey: d.GEMINI_API_KEY, model: d.GEMINI_MODEL, modelFast: d.GEMINI_MODEL_FAST, dailyLimit: d.AI_DAILY_CALL_LIMIT };
 }
 
+const dbSchema = z.object({ DATABASE_URL: req });
+
+/** Narrow accessor for the database: only DATABASE_URL is checked, so a missing Gemini or buyer key never takes the DB down. */
+export function getDatabaseUrl(source: Record<string, string | undefined> = process.env): string {
+  const parsed = dbSchema.safeParse(source);
+  if (!parsed.success) throw new Error("Invalid or missing environment variables: DATABASE_URL");
+  return parsed.data.DATABASE_URL;
+}
+
+/** The shared sandbox test buyer's email (wallet pre-fill, /demo). Undefined when unset. */
+export function getSandboxBuyerEmail(source: Record<string, string | undefined> = process.env): string | undefined {
+  const v = source.SANDBOX_BUYER_EMAIL?.trim();
+  return v ? v : undefined;
+}
+
 /** Narrow accessor for the webhook id. Undefined when unset, so callers can fail closed with a clear message. */
 export function getWebhookId(source: Record<string, string | undefined> = process.env): string | undefined {
   const v = source.PAYPAL_WEBHOOK_ID?.trim();

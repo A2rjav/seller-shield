@@ -22,12 +22,36 @@ export function disputeAmount(d: Pick<PaypalDispute, "dispute_amount">): { amoun
 
 const base = (id: string) => `/v1/customer/disputes/${encodeURIComponent(id)}`;
 
+export const LIST_PAGE_SIZE = 50;
+export const LIST_MAX_PAGES = 5;
+type ListResponse = { items?: PaypalDispute[]; links?: { rel?: string; href?: string }[] };
+
+/** Path + query of the "next" link, only when it stays on the PayPal sandbox disputes list. */
+function nextPath(links: ListResponse["links"]): string | null {
+  const href = links?.find((l) => l.rel === "next")?.href;
+  if (!href) return null;
+  try {
+    const u = new URL(href);
+    if (!u.hostname.endsWith(".paypal.com") || u.pathname !== "/v1/customer/disputes") return null;
+    return `${u.pathname}${u.search}`;
+  } catch {
+    return null;
+  }
+}
+
 export function createDisputesApi(client: Pick<PaypalClient, "paypalFetch">) {
   const f = client.paypalFetch;
 
+  /** Up to LIST_MAX_PAGES pages of LIST_PAGE_SIZE, following PayPal's "next" links (only on the disputes path). */
   async function listDisputes(): Promise<PaypalDispute[]> {
-    const res = await f<{ items?: PaypalDispute[] }>("/v1/customer/disputes", { method: "GET" });
-    return res?.items ?? [];
+    const all: PaypalDispute[] = [];
+    let path: string | null = `/v1/customer/disputes?page_size=${LIST_PAGE_SIZE}`;
+    for (let page = 0; path && page < LIST_MAX_PAGES; page++) {
+      const res: ListResponse = await f<ListResponse>(path, { method: "GET" });
+      all.push(...(res?.items ?? []));
+      path = nextPath(res?.links);
+    }
+    return all;
   }
 
   function getDispute(id: string): Promise<PaypalDispute> {

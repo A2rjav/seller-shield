@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import postgres from "postgres";
-import { getEnv } from "@/lib/env";
+import { getDatabaseUrl } from "@/lib/env";
 import { getDevDb } from "./dev-pglite";
 import { resolveDbMode } from "./mode";
 import * as schema from "./schema";
@@ -20,7 +20,7 @@ export function getDb(): Db {
     if (resolveDbMode(process.env) === "dev-pglite") {
       instance = getDevDb() as unknown as Db;
     } else {
-      const client = postgres(getEnv().DATABASE_URL, { max: 5, prepare: false });
+      const client = postgres(getDatabaseUrl(), { max: 5, prepare: false });
       instance = drizzle(client, { schema }) as unknown as Db;
     }
   }

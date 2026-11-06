@@ -19,6 +19,34 @@ describe("disputes api request shapes", () => {
     expect(last().init.method).toBe("GET");
   });
 
+  it("listDisputes asks for 50 per page and follows next links, at most 5 pages (M5)", async () => {
+    const base = "https://api-m.sandbox.paypal.com/v1/customer/disputes";
+    let page = 0;
+    const f = fakeFetch((c) => {
+      if (c.url.endsWith("/v1/oauth2/token")) return undefined;
+      page++;
+      return json(200, { items: [{ dispute_id: `D${page}` }], links: [{ rel: "next", href: `${base}?page_size=50&next_page_token=t${page}` }] });
+    });
+    const api = createDisputesApi(createPaypalClient({ fetch: f.fetch, config }));
+    const r = await api.listDisputes();
+    expect(r.map((d) => d.dispute_id)).toEqual(["D1", "D2", "D3", "D4", "D5"]);
+    const urls = f.calls.filter((c) => !c.url.endsWith("/v1/oauth2/token")).map((c) => c.url);
+    expect(urls).toHaveLength(5);
+    expect(urls[0]).toBe(`${base}?page_size=50`);
+    expect(urls[1]).toBe(`${base}?page_size=50&next_page_token=t1`);
+  });
+
+  it("listDisputes stops without a next link and never follows a link off the disputes path (M5)", async () => {
+    const replies = [
+      { items: [{ dispute_id: "A" }], links: [{ rel: "next", href: "https://api-m.sandbox.paypal.com/v1/customer/disputes?page_size=50&next_page_token=x" }] },
+      { items: [{ dispute_id: "B" }], links: [{ rel: "next", href: "https://evil.example.com/v1/customer/disputes?x=1" }] },
+    ];
+    const f = fakeFetch((c) => (c.url.endsWith("/v1/oauth2/token") ? undefined : json(200, replies.shift())));
+    const api = createDisputesApi(createPaypalClient({ fetch: f.fetch, config }));
+    expect((await api.listDisputes()).map((d) => d.dispute_id)).toEqual(["A", "B"]);
+    expect(f.calls.filter((c) => !c.url.endsWith("/v1/oauth2/token"))).toHaveLength(2);
+  });
+
   it("listDisputes returns [] when there are no items", async () => {
     const { api } = setup({});
     expect(await api.listDisputes()).toEqual([]);
