@@ -37,7 +37,32 @@ export function getEnv(source: Record<string, string | undefined> = process.env)
   return parsed.data;
 }
 
-export type AiConfig = { apiKey: string; model?: string; dailyLimit: number };
+export type PaypalConfig = { clientId: string; clientSecret: string; apiBase: string };
+
+const SANDBOX_HOSTS = new Set(["api-m.sandbox.paypal.com", "api.sandbox.paypal.com"]);
+
+const paypalSchema = z.object({
+  PAYPAL_CLIENT_ID: req,
+  PAYPAL_CLIENT_SECRET: req,
+  PAYPAL_API_BASE: z.preprocess(blank, z.string().url().default("https://api-m.sandbox.paypal.com")),
+});
+
+/** Narrow accessor for the PayPal client. Sandbox only: any non-sandbox base URL is refused. */
+export function getPaypalConfig(source: Record<string, string | undefined> = process.env): PaypalConfig {
+  const parsed = paypalSchema.safeParse(source);
+  if (!parsed.success) {
+    const keys = [...new Set(parsed.error.issues.map((i) => String(i.path[0])))];
+    throw new Error(`Invalid or missing environment variables: ${keys.join(", ")}`);
+  }
+  const d = parsed.data;
+  const url = new URL(d.PAYPAL_API_BASE);
+  if (url.protocol !== "https:" || !SANDBOX_HOSTS.has(url.host)) {
+    throw new Error("PAYPAL_API_BASE must be the PayPal sandbox host (this app is sandbox only)");
+  }
+  return { clientId: d.PAYPAL_CLIENT_ID, clientSecret: d.PAYPAL_CLIENT_SECRET, apiBase: url.origin };
+}
+
+export type AiConfig ={ apiKey: string; model?: string; dailyLimit: number };
 
 const aiSchema = z.object({
   GEMINI_API_KEY: req,
