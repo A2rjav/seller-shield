@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { CompactSign, compactVerify, importJWK, decodeProtectedHeader, type JWK, type CryptoKey, type KeyObject } from "jose";
+import { CompactSign, compactVerify, importJWK, decodeProtectedHeader, type JWK } from "jose";
+import { canonicalJson, type SigningKey } from "./sign";
+
+export { canonicalJson, signMandate } from "./sign";
 
 export type MandateItem = { sku: string; qty: number };
 
@@ -31,27 +34,6 @@ export type MandateFailure =
   | "invalid_order"
   | "payer_email_mismatch"; // set later by recordCapturedOrder, never by verifyMandate
 
-type SigningKey = CryptoKey | KeyObject | JWK | Uint8Array;
-
-function sortDeep(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(sortDeep);
-  if (v && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.keys(o)
-        .sort()
-        .filter((k) => o[k] !== undefined)
-        .map((k) => [k, sortDeep(o[k])]),
-    );
-  }
-  return v;
-}
-
-/** JSON with recursively sorted object keys, arrays in order, no whitespace. */
-export function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortDeep(value));
-}
-
 /** Lowercase sha256 hex (64 chars) of the canonical JSON. */
 export function canonicalHash(payload: MandatePayload): string {
   return createHash("sha256").update(canonicalJson(payload), "utf8").digest("hex");
@@ -79,12 +61,6 @@ const orderSchema = z.object({
 });
 
 const enc = new TextEncoder();
-
-export async function signMandate(payload: MandatePayload, shopperPrivateKey: SigningKey): Promise<string> {
-  return new CompactSign(enc.encode(canonicalJson(payload)))
-    .setProtectedHeader({ alg: "EdDSA" })
-    .sign(shopperPrivateKey as CryptoKey);
-}
 
 export async function signAgentRequest(
   body: { mandateHash: string; orderRequest: OrderRequest },

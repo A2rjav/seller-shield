@@ -45,7 +45,8 @@ async function postJson(url: string, body: unknown): Promise<{ ok: boolean; data
   return { ok: res.ok, data };
 }
 
-export default function PayPalButton({ clientId, items }: { clientId: string; items: Item[] }) {
+/** With `orderId` the order already exists (agent checkout): the button only approves and captures it. */
+export default function PayPalButton({ clientId, items = [], orderId }: { clientId: string; items?: Item[]; orderId?: string }) {
   const router = useRouter();
   const container = useRef<HTMLDivElement>(null);
   const itemsRef = useRef(items);
@@ -67,6 +68,7 @@ export default function PayPalButton({ clientId, items }: { clientId: string; it
           style: { layout: "vertical", color: "gold", shape: "rect", label: "paypal" },
           createOrder: async () => {
             setError(null);
+            if (orderId) return orderId;
             const r = await postJson("/api/orders", { items: itemsRef.current });
             if (!r.ok || typeof r.data.id !== "string") throw new Error(String(r.data.error ?? "Could not start checkout"));
             return r.data.id;
@@ -93,7 +95,7 @@ export default function PayPalButton({ clientId, items }: { clientId: string; it
       cancelled = true;
       buttons?.close().catch(() => {});
     };
-  }, [clientId, itemsKey, router]);
+  }, [clientId, itemsKey, orderId, router]);
 
   return (
     <div>
