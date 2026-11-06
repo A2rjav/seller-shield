@@ -1,0 +1,1 @@
+ALTER TABLE "mandates" ADD COLUMN "paypal_custom_id_match" boolean;

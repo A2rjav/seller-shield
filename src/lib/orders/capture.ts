@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { mandates, orders } from "@/lib/db/schema";
-import { getOrder, captureOrder, mapCapturedOrder, mapOrderItems } from "@/lib/paypal/orders";
+import { getOrder, captureOrder, mapCapturedOrder, mapOrderItems, readCustomId } from "@/lib/paypal/orders";
 import { PaypalError } from "@/lib/paypal/client";
 import { recordCapturedOrder } from "./record";
 
@@ -37,6 +37,11 @@ export async function captureAndRecord(
     mandateId: mandate?.id,
     items,
   });
+  if (mandate) {
+    // The order was created with the mandate hash as custom_id: confirm PayPal's own record says the same.
+    const match = readCustomId(ppOrder) === mandate.hash;
+    await db.update(mandates).set({ paypalCustomIdMatch: match }).where(eq(mandates.id, mandate.id));
+  }
   const [row] = await db.select().from(orders).where(eq(orders.id, id));
   return row;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPaypalClient, PaypalError } from "@/lib/paypal/client";
-import { createOrdersApi } from "@/lib/paypal/orders";
+import { createOrdersApi, readCustomId } from "@/lib/paypal/orders";
 import { createTrackingApi } from "@/lib/paypal/tracking";
 import { getPaypalConfig } from "@/lib/env";
 import { config, fakeFetch, json, type Call } from "./helpers";
@@ -17,6 +17,15 @@ function setup(routes: Parameters<typeof fakeFetch>[0]) {
 }
 const orderCalls = (calls: Call[]) => calls.filter((c) => c.url.endsWith("/v2/checkout/orders"));
 const input = { returnUrl: "https://app/ok", cancelUrl: "https://app/no" };
+
+describe("readCustomId (I4)", () => {
+  it("reads purchase_units[0].custom_id, else null", () => {
+    expect(readCustomId({ purchase_units: [{ custom_id: "abc" }] })).toBe("abc");
+    expect(readCustomId({ purchase_units: [{}] })).toBeNull();
+    expect(readCustomId({ purchase_units: [{ custom_id: 5 }] })).toBeNull();
+    expect(readCustomId(null)).toBeNull();
+  });
+});
 
 describe("createOrder", () => {
   it("computes total from catalog not caller", async () => {

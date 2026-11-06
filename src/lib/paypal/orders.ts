@@ -73,6 +73,12 @@ export function mapCapturedOrder(res: unknown): CapturedOrder | null {
   };
 }
 
+/** The custom_id PayPal holds on the order (agent orders carry the mandate hash there); null when absent. */
+export function readCustomId(res: unknown): string | null {
+  const v = (res as { purchase_units?: { custom_id?: unknown }[] } | null)?.purchase_units?.[0]?.custom_id;
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
 /** Line items of a PayPal order, with amounts converted to cents. */
 export function mapOrderItems(res: unknown): { sku: string; name: string; qty: number; priceCents: number }[] {
   const list =

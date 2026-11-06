@@ -68,6 +68,8 @@ export const mandates = pgTable("mandates", {
   verified: boolean("verified").notNull(),
   failures: jsonb("failures"),
   payerEmailMatch: boolean("payer_email_match"),
+  /** PayPal order custom_id read back at capture equals `hash`. Null: not checked (e.g. captured before this check). */
+  paypalCustomIdMatch: boolean("paypal_custom_id_match"),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 

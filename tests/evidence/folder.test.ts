@@ -22,10 +22,10 @@ async function seedShipment(orderId: string, simulated = true) {
     simulated, shipToAddress: addr,
   });
 }
-async function seedMandate(orderId: string, verified: boolean, failures: string[] = []) {
+async function seedMandate(orderId: string, verified: boolean, failures: string[] = [], paypalCustomIdMatch: boolean | null = null) {
   await db.insert(mandates).values({
     id: `m-${orderId}`, orderId, shopperJws: "a", agentJws: "b", hash: "hash123", verified, failures,
-    payerEmailMatch: true,
+    payerEmailMatch: true, paypalCustomIdMatch,
     payload: {
       mandateId: `m-${orderId}`, shopperEmail: "b@example.com", agentId: "agent-7", merchantId: "juniper-and-thread",
       items: [{ sku: "ring-1", qty: 1 }], maxAmountCents: 7000, currency: "USD",
@@ -35,6 +35,27 @@ async function seedMandate(orderId: string, verified: boolean, failures: string[
 }
 
 beforeEach(async () => { db = await createTestDb(); });
+
+describe("mandate item: PayPal order custom_id read-back (I4)", () => {
+  const mandateSummary = async (match: boolean | null) => {
+    db = await createTestDb();
+    await seedOrder("O9", "agent");
+    await seedMandate("O9", true, [], match);
+    const f = await buildEvidenceFolder(db, { orderId: "O9" });
+    return f.find((i) => i.kind === "mandate")!;
+  };
+  it("says the custom_id matches the mandate hash", async () => {
+    const m = await mandateSummary(true);
+    expect(m.summary).toContain("PayPal order custom_id = hash123 (matches)");
+    expect(m.data).toMatchObject({ paypalCustomIdMatch: true });
+  });
+  it("says when it does not match", async () => {
+    expect((await mandateSummary(false)).summary).toContain("PayPal order custom_id (does not match the mandate hash)");
+  });
+  it("says when it was not checked", async () => {
+    expect((await mandateSummary(null)).summary).toContain("PayPal order custom_id (not checked)");
+  });
+});
 
 describe("buildEvidenceFolder", () => {
   it("agent order folder contains mandate, payer_approval and agent_identity items", async () => {

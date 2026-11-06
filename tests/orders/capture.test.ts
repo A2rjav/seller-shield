@@ -23,6 +23,29 @@ describe("captureAndRecord", () => {
     expect(await db.select().from(orders)).toHaveLength(1);
   });
 
+  it("reads custom_id back from the PayPal order and stores whether it matches the mandate hash (I4)", async () => {
+    for (const [customId, expected] of [["h", true], ["other", false], [undefined, false]] as const) {
+      const db = await createTestDb();
+      await db.insert(mandates).values({
+        id: "m-9", orderId: "O2", shopperJws: "a", agentJws: "b", hash: "h", verified: true,
+        payload: { shopperEmail: "b@example.com" },
+      });
+      const withCustom = { purchase_units: [{ ...ppOrder.purchase_units[0], ...(customId ? { custom_id: customId } : {}) }] };
+      const deps = { getOrder: vi.fn().mockResolvedValue(withCustom), captureOrder: vi.fn().mockResolvedValue(captured) };
+      await captureAndRecord(db, "O2", deps);
+      const [m] = await db.select().from(mandates);
+      expect(m.paypalCustomIdMatch, String(customId)).toBe(expected);
+    }
+  });
+
+  it("human orders have no mandate to compare", async () => {
+    const db = await createTestDb();
+    const deps = { getOrder: vi.fn().mockResolvedValue({ purchase_units: [{ ...ppOrder.purchase_units[0], custom_id: "x" }] }), captureOrder: vi.fn().mockResolvedValue(captured) };
+    const o = await captureAndRecord(db, "O7", deps);
+    expect(o.source).toBe("human");
+    expect(await db.select().from(mandates)).toHaveLength(0);
+  });
+
   it("treats an order with a mandates row as an agent order", async () => {
     const db = await createTestDb();
     await db.insert(mandates).values({

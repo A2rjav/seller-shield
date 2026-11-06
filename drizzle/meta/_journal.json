@@ -36,6 +36,13 @@
       "when": 1793955510448,
       "tag": "0004_boring_talon",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793958377538,
+      "tag": "0005_sweet_frightful_four",
+      "breakpoints": true
     }
   ]
 }

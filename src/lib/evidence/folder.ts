@@ -174,14 +174,18 @@ function addMandateItems(
     : `verified: false (failures: ${failures.length ? failures.join(", ") : "none recorded"})`;
   const rawId = (mandate.payload as { mandateId?: unknown } | null)?.mandateId;
   const label = isStr(rawId) ? rawId : "unknown";
+  const customIdText =
+    mandate.paypalCustomIdMatch === true ? `PayPal order custom_id = ${mandate.hash} (matches)`
+    : mandate.paypalCustomIdMatch === false ? "PayPal order custom_id (does not match the mandate hash)"
+    : "PayPal order custom_id (not checked)";
 
   items.push({
     id: `ev:mandate:${mandate.id}`, kind: "mandate", title: "Purchase mandate",
     at: p ? p.createdAt : null, source: "mandate", simulated: false,
     summary: p
-      ? `Mandate ${p.mandateId} for ${p.shopperEmail}: max ${money(p.maxAmountCents, p.currency)}, items ${p.items.map((i) => `${i.qty} x ${i.sku}`).join(", ")}, created ${day(p.createdAt)}, expires ${day(p.expiresAt)}; ${verifiedText}; hash ${mandate.hash}`
-      : `Mandate ${label}: payload unreadable — not verified`,
-    data: { payload: mandate.payload, hash: mandate.hash, verified: mandate.verified, failures },
+      ? `Mandate ${p.mandateId} for ${p.shopperEmail}: max ${money(p.maxAmountCents, p.currency)}, items ${p.items.map((i) => `${i.qty} x ${i.sku}`).join(", ")}, created ${day(p.createdAt)}, expires ${day(p.expiresAt)}; ${verifiedText}; hash ${mandate.hash}; ${customIdText}`
+      : `Mandate ${label}: payload unreadable — not verified; ${customIdText}`,
+    data: { payload: mandate.payload, hash: mandate.hash, verified: mandate.verified, failures, paypalCustomIdMatch: mandate.paypalCustomIdMatch },
   });
 
   const match = mandate.payerEmailMatch;
