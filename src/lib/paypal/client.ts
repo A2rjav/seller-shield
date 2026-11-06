@@ -42,8 +42,13 @@ export function createPaypalClient(deps: Deps): PaypalClient {
         body: "grant_type=client_credentials",
       });
       if (!res.ok) throw await toError(res);
-      const data = (await res.json()) as { access_token: string; expires_in: number };
-      token = { value: data.access_token, expiresAt: now() + data.expires_in * 1000 };
+      const data = (await res.json().catch(() => null)) as { access_token?: unknown; expires_in?: unknown } | null;
+      const ttl = Number(data?.expires_in);
+      if (typeof data?.access_token !== "string" || !data.access_token || !Number.isFinite(ttl) || ttl <= 0) {
+        // Malformed OAuth response: never cache it and never send "Bearer undefined".
+        throw new PaypalError({ status: res.status, name: "INVALID_TOKEN_RESPONSE", message: "PayPal returned a malformed OAuth token response" });
+      }
+      token = { value: data.access_token, expiresAt: now() + ttl * 1000 };
       return token.value;
     })().finally(() => {
       inflight = null;
@@ -51,9 +56,10 @@ export function createPaypalClient(deps: Deps): PaypalClient {
     return inflight;
   }
 
-  async function send(path: string, init: PaypalInit): Promise<Response> {
+  async function send(path: string, init: PaypalInit): Promise<{ res: Response; usedToken: string }> {
     const method = init.method.toUpperCase();
-    const headers: Record<string, string> = { Authorization: `Bearer ${await getToken()}` };
+    const usedToken = await getToken();
+    const headers: Record<string, string> = { Authorization: `Bearer ${usedToken}` };
     let body: BodyInit | undefined;
     if (init.multipart) {
       body = init.multipart; // fetch sets the multipart boundary Content-Type itself
@@ -62,14 +68,16 @@ export function createPaypalClient(deps: Deps): PaypalClient {
       body = JSON.stringify(init.body);
     }
     if (WRITE_METHODS.has(method)) headers["PayPal-Request-Id"] = init.requestId ?? crypto.randomUUID();
-    return doFetch(`${cfg().apiBase}${path}`, { method, headers, body });
+    return { res: await doFetch(`${cfg().apiBase}${path}`, { method, headers, body }), usedToken };
   }
 
   const paypalFetch: PaypalFetch = async <T>(path: string, init: PaypalInit) => {
-    let res = await send(path, init);
+    let { res, usedToken } = await send(path, init);
     if (res.status === 401) {
-      token = null;
-      res = await send(path, init);
+      // Only drop the cache if it still holds the token that failed; a concurrent
+      // caller may already have refreshed it (avoids a token stampede).
+      if (token?.value === usedToken) token = null;
+      ({ res, usedToken } = await send(path, init));
     }
     if (!res.ok) throw await toError(res);
     if (res.status === 204) return undefined as T;

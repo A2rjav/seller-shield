@@ -250,6 +250,73 @@ describe("paypalFetch", () => {
   });
 });
 
+describe("token hardening", () => {
+  it("a 401 does not discard a token another call already refreshed", async () => {
+    let tokens = 0;
+    const seen: string[] = [];
+    const f = fakeFetch((c) => {
+      if (c.url.endsWith("/v1/oauth2/token")) return json(200, { access_token: `t${++tokens}`, expires_in: 3600 });
+      if (c.url.endsWith("/v2/a") || c.url.endsWith("/v2/b")) {
+        seen.push(c.init.headers.Authorization);
+        return c.init.headers.Authorization === "Bearer t1" ? json(401, { name: "AUTHENTICATION_FAILURE", message: "x" }) : json(200, { ok: true });
+      }
+      return undefined;
+    });
+    const client = createPaypalClient({ fetch: f.fetch, config, now: () => 0 });
+    await client.paypalFetch("/v2/a", { method: "GET" }); // prime t1 is rejected, refreshes to t2
+    expect(tokens).toBe(2);
+    // Now simulate: B holds stale t1 result arriving after A refreshed. Run a stale-401 scenario directly.
+    tokens = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const f2 = fakeFetch((c) => {
+      if (c.url.endsWith("/v1/oauth2/token")) return json(200, { access_token: `t${++tokens}`, expires_in: 3600 });
+      return undefined;
+    });
+    let slowSeen = false;
+    const wrapped = (async (url: string, init: RequestInit & { headers: Record<string, string> }) => {
+      if (String(url).endsWith("/v2/slow") && !slowSeen) {
+        slowSeen = true;
+        await gate; // hold the first request (using t1) until the other caller has refreshed
+        return json(401, { name: "AUTHENTICATION_FAILURE", message: "x" });
+      }
+      if (String(url).endsWith("/v2/slow") || String(url).endsWith("/v2/fast")) {
+        return init.headers.Authorization === "Bearer t1" && String(url).endsWith("/v2/fast")
+          ? json(401, { name: "AUTHENTICATION_FAILURE", message: "x" })
+          : json(200, { ok: true });
+      }
+      return f2.fetch(url, init);
+    }) as unknown as typeof fetch;
+    const client2 = createPaypalClient({ fetch: wrapped, config, now: () => 0 });
+    const slow = client2.paypalFetch("/v2/slow", { method: "GET" }); // uses t1, parked
+    await new Promise((r) => setTimeout(r, 0));
+    await client2.paypalFetch("/v2/fast", { method: "GET" }); // 401 on t1, refreshes to t2
+    expect(tokens).toBe(2);
+    release(); // slow now gets its stale 401; cache already holds t2, so it must reuse it
+    await slow;
+    expect(tokens).toBe(2);
+  });
+
+  it("rejects malformed OAuth responses with PaypalError and caches nothing", async () => {
+    for (const bad of [{ expires_in: 3600 }, { access_token: "t", expires_in: "soon" }, { access_token: "t" }, { access_token: "", expires_in: 5 }]) {
+      let n = 0;
+      const f = fakeFetch((c) => {
+        if (c.url.endsWith("/v1/oauth2/token")) return ++n === 1 ? json(200, bad) : json(200, { access_token: "good", expires_in: 3600 });
+        if (c.url.endsWith("/v2/x")) return json(200, { ok: true });
+        return undefined;
+      });
+      const client = createPaypalClient({ fetch: f.fetch, config, now: () => 0 });
+      const err = (await client.paypalFetch("/v2/x", { method: "GET" }).catch((e: unknown) => e)) as PaypalError;
+      expect(err).toBeInstanceOf(PaypalError);
+      expect(f.calls.some((c) => c.url.endsWith("/v2/x"))).toBe(false);
+      // nothing cached: next call re-requests a token and succeeds with the good one
+      await expect(client.paypalFetch("/v2/x", { method: "GET" })).resolves.toEqual({ ok: true });
+      expect(n).toBe(2);
+      expect(f.calls.find((c) => c.url.endsWith("/v2/x"))!.init.headers.Authorization).toBe("Bearer good");
+    }
+  });
+});
+
 describe("getPaypalConfig", () => {
   it("defaults to sandbox and refuses other hosts", () => {
     expect(getPaypalConfig({ PAYPAL_CLIENT_ID: "a", PAYPAL_CLIENT_SECRET: "b" }).apiBase).toBe("https://api-m.sandbox.paypal.com");
