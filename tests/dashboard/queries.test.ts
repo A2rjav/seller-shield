@@ -3,7 +3,7 @@ import { createTestDb } from "../helpers/testDb";
 import { cases, disputes, mandates, orders } from "@/lib/db/schema";
 import { countOpenDisputes, listDisputeRows, listOrderRows } from "@/lib/dashboard/queries";
 import { recomputeProtection } from "@/lib/protection/refresh";
-import { addShipment } from "@/lib/shipments/service";
+import { addShipment, markDeliveredSimulated } from "@/lib/shipments/service";
 
 const ADDR = { line1: "1 A St", city: "Austin", state: "TX", postalCode: "78701", countryCode: "US" };
 
@@ -29,10 +29,19 @@ describe("dashboard queries", () => {
     expect(h.firstGapText).toBeTruthy();
     expect(h.coverage.score).toBe(0.75);
 
-    await db.insert(cases).values({ id: "case:D1", disputeId: "D1", draft: { summary: "", timeline: [], argument: [], sellerNote: "" }, recommendation: { action: "fight" } });
+    await db.insert(cases).values({ id: "case:D1", disputeId: "D1", draft: { summary: "", timeline: [], argument: [] }, recommendation: { action: "fight" } });
     const ds = await listDisputeRows(db);
     expect(ds[0]).toMatchObject({ id: "D1", reasonLabel: "Item not received", recommendation: "fight", caseState: "built", simulated: true });
     expect(await countOpenDisputes(db)).toBe(1);
+  });
+
+  it("flags a row whose delivery is simulated (I2)", async () => {
+    const db = await createTestDb();
+    await db.insert(orders).values({ id: "H-2", source: "human", status: "COMPLETED", amountCents: 6000, currency: "USD", shipName: "Ann", shipAddress: ADDR, items: [], captureId: "C9" });
+    const s = await addShipment(db, "H-2", { carrier: "USPS", trackingNumber: "9400111899224" });
+    expect((await listOrderRows(db))[0].deliverySimulated).toBe(false); // in transit: nothing delivered yet
+    await markDeliveredSimulated(db, s.id);
+    expect((await listOrderRows(db))[0].deliverySimulated).toBe(true);
   });
 
   it("returns empty lists for an empty shop", async () => {

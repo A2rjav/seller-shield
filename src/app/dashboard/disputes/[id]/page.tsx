@@ -92,8 +92,8 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
-              <span className="font-semibold">Not covered by Seller Protection.</span> PayPal Seller Protection does not cover &ldquo;not as described&rdquo; claims, so this
-              one is decided on your evidence alone.
+              <span className="font-semibold">Not covered by Seller Protection.</span> PayPal Seller Protection covers only item-not-received and unauthorized-payment
+              claims, so this one is decided on your evidence alone.
             </span>
           </p>
         ) : null}
@@ -120,6 +120,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           simulated: dispute.simulated,
           resolved: !open,
           evidenceType: req.paypalEvidenceType,
+          stage: dispute.stage,
         }}
         built={built}
         priorAction={prior?.action ?? null}

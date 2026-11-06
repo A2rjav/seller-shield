@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { GapCode, ProtectionResult } from "@/lib/protection/rules";
-import { protectionBadge } from "@/lib/dashboard/view";
+import { protectedText, protectionBadge } from "@/lib/dashboard/view";
 import Badge from "../Badge";
 import Icon from "../Icon";
 import Panel from "../Panel";
@@ -134,7 +134,8 @@ export default function ProtectionPanel({
         <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-900">
           <Icon name="shieldCheck" className="mt-0.5 h-5 w-5 shrink-0" />
           <p>
-            <span className="font-semibold">Protected.</span> Shipped to the PayPal address, tracking is on PayPal and delivery is confirmed.
+            <span className="font-semibold">Protected.</span>{" "}
+            {protectedText("Shipped to the PayPal address, tracking is on PayPal and delivery is confirmed.", !!shipment?.delivered && shipment.simulated)}
           </p>
         </div>
       ) : (

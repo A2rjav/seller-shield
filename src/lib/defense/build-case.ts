@@ -96,10 +96,13 @@ export async function buildCase(
   const orderId = dispute.orderId ?? null;
   const folder = await buildEvidenceFolder(db, { orderId, disputeId });
   let gathered: EvidenceItem[] = [];
-  try {
-    gathered = await gather(disputeId, { orderId: orderId ?? undefined });
-  } catch {
-    // PayPal unreachable: continue with what we hold locally
+  // A simulated dispute does not exist on PayPal: no toolkit gather (no PayPal or AI calls for it).
+  if (!dispute.simulated) {
+    try {
+      gathered = await gather(disputeId, { orderId: orderId ?? undefined });
+    } catch {
+      // PayPal unreachable: continue with what we hold locally
+    }
   }
   const evidence = mergeEvidence(folder, gathered);
 
@@ -121,7 +124,7 @@ export async function buildCase(
     dispute_amount: { currency_code: dispute.currency, value: toPaypalAmount(dispute.amountCents) },
   };
   const { draft, usedFallback } = await write({ dispute: disputeLike, folder: evidence, requirements });
-  const pdfBytes = await renderEvidencePdf({ dispute: disputeLike, draft, folder: evidence });
+  const pdfBytes = await renderEvidencePdf({ dispute: disputeLike, draft, folder: evidence, simulated: dispute.simulated });
 
   const values = {
     disputeId,

@@ -4,6 +4,8 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { StoredRecommendation } from "@/lib/defense/build-case";
 import type { CaseDraft } from "@/lib/defense/case";
+import { caseNotes } from "@/lib/defense/notes";
+import { offerBlockedReason } from "@/lib/dashboard/view";
 import EmptyState from "../EmptyState";
 import Icon from "../Icon";
 import Panel from "../Panel";
@@ -22,7 +24,7 @@ export type BuiltCase = {
 };
 
 export type CaseWorkspaceProps = {
-  dispute: { id: string; amountCents: number; currency: string; simulated: boolean; resolved: boolean; evidenceType: string };
+  dispute: { id: string; amountCents: number; currency: string; simulated: boolean; resolved: boolean; evidenceType: string; stage: string };
   built: BuiltCase | null;
   priorAction: string | null;
   coverage: { have: string[]; missing: string[]; score: number };
@@ -89,7 +91,7 @@ export default function CaseWorkspace({ dispute, built, priorAction, coverage, f
 
   const submitted = !!built?.submittedAt;
   const pdfUrl = built ? `/api/disputes/${encodeURIComponent(dispute.id)}/pdf?v=${encodeURIComponent(built.builtAt)}` : null;
-  const notes = built ? [built.draft.summary, built.draft.sellerNote].filter(Boolean).join("\n\n").slice(0, 2000) : "";
+  const notes = built ? caseNotes(built.draft) : "";
   const buildButton = built ? (
     <button
       type="button"
@@ -137,7 +139,7 @@ export default function CaseWorkspace({ dispute, built, priorAction, coverage, f
         <div className="min-w-0 space-y-6">
           <Panel
             title="Case draft"
-            subtitle={built ? `Built ${stamp.format(new Date(built.builtAt))} · every sentence cites evidence from the folder` : "Seller Shield writes the case from your evidence only"}
+            subtitle={built ? `Built ${stamp.format(new Date(built.builtAt))} · every timeline and argument entry cites evidence from the folder` : "Seller Shield writes the case from your evidence only"}
             actions={built ? buildButton : undefined}
           >
             {building && !built ? (
@@ -200,6 +202,7 @@ export default function CaseWorkspace({ dispute, built, priorAction, coverage, f
             amountCents={dispute.amountCents}
             currency={dispute.currency}
             offerCents={built?.recommendation.offerCents ?? Math.round(dispute.amountCents / 2)}
+            offerBlockedReason={offerBlockedReason(dispute.stage)}
             submitBlockedReason={!built ? "Build the case first." : submitted ? "Evidence already submitted." : null}
             priorAction={priorAction}
             notesPreview={notes}

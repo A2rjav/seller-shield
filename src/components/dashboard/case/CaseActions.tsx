@@ -23,6 +23,7 @@ export default function CaseActions({
   amountCents,
   currency,
   offerCents,
+  offerBlockedReason = null,
   submitBlockedReason,
   priorAction,
   notesPreview,
@@ -36,6 +37,8 @@ export default function CaseActions({
   amountCents: number;
   currency: string;
   offerCents: number;
+  /** Set when the dispute stage does not allow offers (chargeback); the button is disabled and this line shown. */
+  offerBlockedReason?: string | null;
   submitBlockedReason: string | null;
   priorAction: string | null;
   notesPreview: string;
@@ -100,11 +103,12 @@ export default function CaseActions({
         <button
           type="button"
           onClick={() => setOpen("offer")}
-          disabled={resolved || offerDone || acceptDone}
+          disabled={resolved || offerDone || acceptDone || !!offerBlockedReason}
           className={`${btn} border border-[#e0d7c3] bg-white text-foreground hover:bg-[#f7f3ea]`}
         >
           <Icon name="dollar" className="h-4 w-4" /> Make offer ({formatMoney(offerCents, currency)})
         </button>
+        {offerBlockedReason && !resolved ? <p className="text-xs text-muted">{offerBlockedReason}</p> : null}
         <button
           type="button"
           onClick={() => setOpen("accept")}

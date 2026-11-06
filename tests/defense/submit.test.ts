@@ -5,9 +5,11 @@ import { cases, disputes, orders } from "@/lib/db/schema";
 import { buildCase, RebuildRefused } from "@/lib/defense/build-case";
 import { submitAccept, submitCase, submitOffer } from "@/lib/defense/submit";
 import { REASON_REQUIREMENTS } from "@/lib/evidence/requirements";
-import { templateCase } from "@/lib/defense/case";
+import { caseNotes, templateCase, type CaseDraft } from "@/lib/defense/case";
 import type { EvidenceItem } from "@/lib/evidence/folder";
 import type { PaypalDispute } from "@/lib/paypal/disputes";
+import { PDFDocument } from "pdf-lib";
+import { SIMULATED_BANNER } from "@/lib/defense/pdf";
 
 const gathered: EvidenceItem[] = [
   { id: "ev:dispute:D1", kind: "dispute", title: "Dispute", at: "2026-11-07T00:00:00.000Z", summary: "Dispute D1 opened 2026-11-07 for $60.00", data: {}, source: "paypal", simulated: false },
@@ -23,7 +25,7 @@ async function setup(simulated: boolean) {
     id: "D1", orderId: "O1", reason: "MERCHANDISE_OR_SERVICE_NOT_RECEIVED", status: "WAITING_FOR_SELLER_RESPONSE",
     stage: "INQUIRY", amountCents: 6000, currency: "USD", simulated, lastEventAt: new Date("2026-11-07T00:00:00Z"),
   });
-  const write = vi.fn(async (input: { folder: EvidenceItem[]; requirements: { needed: never[] } }) => ({
+  const write = vi.fn(async (input: { folder: EvidenceItem[]; requirements: { plain: string; needed: never[] } }) => ({
     draft: templateCase(input.folder, input.requirements), usedFallback: true,
   }));
   const deps = { gather: vi.fn(async () => gathered), writeCase: write as never };
@@ -52,6 +54,22 @@ describe("buildCase", () => {
     const [row] = await db.select().from(cases).where(eq(cases.id, "case:D1"));
     expect(row.pdfBytes).toBeInstanceOf(Uint8Array);
     expect(row.pdfBytes!.length).toBe(c.pdfBytes!.length);
+  });
+
+  it("simulated dispute: no PayPal gather (M3) and the PDF is marked SIMULATED (I2)", async () => {
+    const { db, deps } = await setup(true);
+    const c = await buildCase(db, "D1", { deps });
+    expect(deps.gather).not.toHaveBeenCalled();
+    const pdf = await PDFDocument.load(c.pdfBytes!);
+    expect(pdf.getSubject()).toBe(SIMULATED_BANNER);
+  });
+
+  it("real dispute: gathers from PayPal and the PDF has no SIMULATED banner", async () => {
+    const { db, deps } = await setup(false);
+    const c = await buildCase(db, "D1", { deps });
+    expect(deps.gather).toHaveBeenCalledTimes(1);
+    const pdf = await PDFDocument.load(c.pdfBytes!);
+    expect(pdf.getSubject() ?? "").not.toContain("SIMULATED");
   });
 
   it("reuses an existing case unless rebuild is true", async () => {
@@ -111,6 +129,11 @@ describe("submitCase", () => {
     expect(arg.evidenceType).toBe(REASON_REQUIREMENTS.MERCHANDISE_OR_SERVICE_NOT_RECEIVED.paypalEvidenceType);
     expect(arg.pdf).toBeInstanceOf(Uint8Array);
     expect(arg.notes.length).toBeGreaterThan(0);
+    // Notes = deterministic summary + the validated entries with their evidence ids (no AI free text).
+    const [built] = await db.select().from(cases);
+    expect(arg.notes).toBe(caseNotes(built.draft as CaseDraft));
+    expect(arg.notes).toContain("[ev:dispute:D1]");
+    expect(arg.notes.startsWith((built.draft as CaseDraft).summary)).toBe(true);
     const [d] = await db.select().from(disputes);
     expect(d.status).toBe("UNDER_REVIEW");
     const [row] = await db.select().from(cases);
@@ -122,7 +145,7 @@ describe("submitCase", () => {
     const api = paypal();
     expect((await submitCase(db, "D1", { sellerConfirmed: true }, { api })).error).toMatch(/no case/i);
     await buildCase(db, "D1", { deps });
-    await db.update(cases).set({ draft: { summary: "", timeline: [], argument: [{ text: "x", evidenceIds: ["ev:nope"] }], sellerNote: "" } });
+    await db.update(cases).set({ draft: { summary: "", timeline: [], argument: [{ text: "x", evidenceIds: ["ev:nope"] }] } });
     expect((await submitCase(db, "D1", { sellerConfirmed: true }, { api })).error).toMatch(/evidence|valid/i);
     await buildCase(db, "D1", { deps: { ...deps, now: later(61) }, rebuild: true });
     await db.update(disputes).set({ status: "RESOLVED" });
@@ -150,6 +173,19 @@ describe("submitOffer / submitAccept", () => {
     await db.update(disputes).set({ status: "WAITING_FOR_SELLER_RESPONSE" });
     await submitOffer(db, "D1", { sellerConfirmed: true, amountCents: 2000 }, { api });
     expect(api.makeOffer).toHaveBeenLastCalledWith("D1", expect.objectContaining({ amountCents: 2000 }));
+  });
+
+  it("refuses an offer at the chargeback stage (M9), simulated or real", async () => {
+    for (const sim of [true, false]) {
+      const { db, deps } = await setup(sim);
+      await db.update(disputes).set({ stage: "CHARGEBACK" });
+      await buildCase(db, "D1", { deps });
+      const api = paypal();
+      const r = await submitOffer(db, "D1", { sellerConfirmed: true }, { api });
+      expect(r.submitted).toBe(false);
+      expect(r.error).toMatch(/chargeback/i);
+      expect(api.makeOffer).not.toHaveBeenCalled();
+    }
   });
 
   it("accept requires confirmation, and simulated disputes skip PayPal", async () => {

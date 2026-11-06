@@ -47,12 +47,6 @@ export default function CaseDraftView({ draft, evidence }: { draft: CaseDraft; e
         </section>
       ) : null}
 
-      {draft.sellerNote ? (
-        <section>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted">Note from the seller</h3>
-          <p className="mt-1 italic text-foreground/85">{draft.sellerNote}</p>
-        </section>
-      ) : null}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import type { CaseDraft } from "./case";
+import { CITATION_CLAIM } from "./notes";
 import type { EvidenceItem } from "@/lib/evidence/folder";
 import { REASON_REQUIREMENTS, type PaypalReason } from "@/lib/evidence/requirements";
 
@@ -15,9 +16,10 @@ const SUBS: [RegExp, string][] = [
 
 /** Standard fonts only encode WinAnsi; map common punctuation and drop whatever else cannot be encoded. */
 export function sanitize(s: string): string {
-  let out = s;
+  let out = s.replace(/\r\n?/g, "\n").replace(/\t/g, " ");
   for (const [re, to] of SUBS) out = out.replace(re, to);
-  return out.replace(/[^\x20-\x7E\xA1-\xFF]/g, "");
+  // Newlines survive so wrap() can split paragraphs on them.
+  return out.replace(/[^\n\x20-\x7E\xA1-\xFF]/g, "");
 }
 
 /** One timeline/argument row with its citations; rows that cite a simulated item carry a [SIMULATED] marker. */
@@ -26,18 +28,32 @@ export function formatRow(text: string, ids: string[], byId: Map<string, Evidenc
   return `${at ? at.slice(0, 10) + "  " : ""}${text}  [${ids.join(", ")}]${sim ? " [SIMULATED]" : ""}`;
 }
 
+export const SIMULATED_BANNER = "SIMULATED DISPUTE - demo data, not from PayPal";
+
+/** The fixed notices on the cover. A simulated dispute leads with the banner. */
+export function coverNotices(o: { simulated: boolean }): string[] {
+  return [
+    ...(o.simulated ? [SIMULATED_BANNER] : []),
+    `${CITATION_CLAIM} shown in brackets. Items marked SIMULATED come from a demo carrier or simulation, not from a real carrier or PayPal record.`,
+  ];
+}
+
 const W = 612, H = 792, M = 54, LH = 14;
 
 export async function renderEvidencePdf(input: {
   dispute: DisputeLike;
   draft: CaseDraft;
   folder: EvidenceItem[];
+  /** True for a demo dispute that does not exist on PayPal: the cover and metadata say so. */
+  simulated?: boolean;
   shopName?: string;
   generatedAt?: Date;
 }): Promise<Uint8Array> {
   const { dispute, draft, folder } = input;
+  const simulated = input.simulated === true;
   const doc = await PDFDocument.create();
-  doc.setTitle(sanitize(`Seller Shield evidence pack - ${dispute.dispute_id}`));
+  doc.setTitle(sanitize(`Seller Shield evidence pack - ${dispute.dispute_id}${simulated ? " (SIMULATED)" : ""}`));
+  if (simulated) doc.setSubject(SIMULATED_BANNER);
   doc.setProducer("Seller Shield");
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -81,6 +97,13 @@ export async function renderEvidencePdf(input: {
   const gap = (n = LH) => { y -= n; };
 
   // ---- Cover ----
+  const notices = coverNotices({ simulated });
+  const citationNote = notices[notices.length - 1];
+  if (simulated) {
+    page.drawRectangle({ x: M - 6, y: y - 8, width: W - 2 * M + 12, height: 24, color: rgb(1, 0.93, 0.85), borderColor: rgb(0.7, 0.3, 0), borderWidth: 1 });
+    write(SIMULATED_BANNER, { f: bold, size: 12, color: [0.7, 0.3, 0] });
+    gap(10);
+  }
   const reasonPlain = REASON_REQUIREMENTS[dispute.reason as PaypalReason]?.plain ?? dispute.reason;
   write(input.shopName ?? "Juniper & Thread", { f: bold, size: 22 });
   gap(6);
@@ -94,7 +117,7 @@ export async function renderEvidencePdf(input: {
   gap();
   if (draft.summary) write(draft.summary);
   gap();
-  write("Every statement in this pack cites the evidence item ids shown in brackets. Items marked SIMULATED come from a demo carrier or simulation, not from a real carrier or PayPal record.", { size: 9, color: [0.4, 0.4, 0.4] });
+  write(citationNote, { size: 9, color: [0.4, 0.4, 0.4] });
 
   // ---- Timeline ----
   newPage();
@@ -112,11 +135,6 @@ export async function renderEvidencePdf(input: {
       write(formatRow(a.text, a.evidenceIds, byId));
       gap(4);
     }
-  }
-  if (draft.sellerNote) {
-    gap();
-    write("Seller note", { f: bold, size: 12 });
-    write(draft.sellerNote);
   }
 
   // ---- One section per cited item ----

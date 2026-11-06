@@ -1,19 +1,23 @@
 import { z } from "zod";
 import { askJson as defaultAskJson, type AskOpts, type AskResult } from "@/lib/ai/gemini";
 import type { EvidenceItem, EvidenceKind } from "@/lib/evidence/folder";
+import { evidenceKindLabel } from "@/lib/dashboard/view";
+import { CITATION_CLAIM } from "./notes";
 
-export type CaseDraft = {
-  summary: string;
+export { CITATION_CLAIM, NOTES_MAX, caseNotes } from "./notes";
+
+/** What the model writes: only cited entries. */
+export type CaseBody = {
   timeline: { at: string; text: string; evidenceIds: string[] }[];
   argument: { text: string; evidenceIds: string[] }[];
-  sellerNote: string;
 };
 
-export const caseDraftSchema: z.ZodType<CaseDraft> = z.object({
-  summary: z.string(),
+/** A stored case: the model's cited entries plus a summary built in code (never AI free text). */
+export type CaseDraft = CaseBody & { summary: string };
+
+export const caseBodySchema: z.ZodType<CaseBody> = z.object({
   timeline: z.array(z.object({ at: z.string(), text: z.string(), evidenceIds: z.array(z.string()) })),
   argument: z.array(z.object({ text: z.string(), evidenceIds: z.array(z.string()) })),
-  sellerNote: z.string(),
 });
 
 // ---- Claim extraction ----
@@ -152,8 +156,35 @@ export function validateClaims(draft: CaseDraft, folder: EvidenceItem[]): { ok: 
     if (e.at !== null) problems.push(...checkAt(e.label, e.at, known));
   }
   problems.push(...checkText("summary", draft.summary, folder));
-  problems.push(...checkText("sellerNote", draft.sellerNote, folder));
   return { ok: problems.length === 0, problems };
+}
+
+// ---- Deterministic summary and notes ----
+
+type Requirements = { plain: string; needed: EvidenceKind[] };
+
+/** "The buyer says the order never arrived, so you need ..." -> "The buyer says the order never arrived." */
+function claimSentence(plain: string): string {
+  const m = plain.match(/^(.*?)(?:,\s*so\b|;)/);
+  const s = (m ? m[1] : plain).trim().replace(/[.\s]+$/, "");
+  return `${s}.`;
+}
+
+const kindList = (kinds: EvidenceKind[]) => (kinds.length ? kinds.map((k) => evidenceKindLabel(k).toLowerCase()).join(", ") : "none");
+
+/** Built in code from the reason, the evidence coverage and counts. No AI text, no amounts, dates or ids. */
+export function caseSummary(folder: EvidenceItem[], requirements: Requirements): string {
+  const have = new Set(folder.map((i) => i.kind));
+  const present = requirements.needed.filter((k) => have.has(k));
+  const missing = requirements.needed.filter((k) => !have.has(k));
+  const n = folder.length;
+  const sim = folder.filter((i) => i.simulated).length;
+  return [
+    claimSentence(requirements.plain),
+    `This response is built from ${n} evidence item${n === 1 ? "" : "s"}${sim ? ` (${sim} simulated)` : ""}.`,
+    `Evidence this claim needs that is on file: ${kindList(present)}. Missing: ${kindList(missing)}.`,
+    `${CITATION_CLAIM}.`,
+  ].join(" ");
 }
 
 // ---- Deterministic template ----
@@ -164,17 +195,16 @@ const ordered = (folder: EvidenceItem[]) =>
 const line = (i: EvidenceItem) => `${i.title}: ${i.summary}${i.simulated ? " (simulated)" : ""}`;
 
 /** Built only from folder items, so it passes validateClaims by construction. */
-export function templateCase(folder: EvidenceItem[], requirements: { needed: EvidenceKind[] }): CaseDraft {
+export function templateCase(folder: EvidenceItem[], requirements: Requirements): CaseDraft {
   const items = ordered(folder);
   const argument = requirements.needed.flatMap((kind) => {
     const of = items.filter((i) => i.kind === kind);
     return of.length ? [{ text: of.map(line).join(" "), evidenceIds: of.map((i) => i.id) }] : [];
   });
   return {
-    summary: `This pack lists ${items.length} evidence item${items.length === 1 ? "" : "s"} from the order record, in time order, with the records that answer the buyer's claim.`,
+    summary: caseSummary(folder, requirements),
     timeline: items.map((i) => ({ at: i.at ?? "", text: line(i), evidenceIds: [i.id] })),
     argument,
-    sellerNote: "",
   };
 }
 
@@ -184,7 +214,7 @@ type DisputeLike = { dispute_id: string; reason: string; dispute_amount: { curre
 type WriteInput = {
   dispute: DisputeLike;
   folder: EvidenceItem[];
-  requirements: { plain: string; needed: EvidenceKind[] };
+  requirements: Requirements;
 };
 type Ask = <T>(opts: AskOpts<T>) => Promise<AskResult<T>>;
 
@@ -193,8 +223,8 @@ Rules:
 - Every timeline and argument entry must list the ids of the evidence items it relies on (evidenceIds), copied exactly.
 - Never state an amount, date, tracking number or fact that is not in the cited items. If evidence is missing, say less, never invent.
 - Items marked simulated=true come from a demo carrier or simulation: when you cite one, say "simulated".
-- Plain, factual, polite tone. No legal claims. summary and sellerNote are short and may cite nothing, but must not contain amounts, dates or identifiers.
-Return JSON: { summary, timeline: [{ at, text, evidenceIds }], argument: [{ text, evidenceIds }], sellerNote }.`;
+- Plain, factual, polite tone. No legal claims. Write no other text: no summary and no notes outside the entries.
+Return JSON: { timeline: [{ at, text, evidenceIds }], argument: [{ text, evidenceIds }] }.`;
 
 /** Buyer contact details never go to the model. */
 const redactEmails = (t: string) => t.replace(/[^\s@<>"',;|]+@[^\s@<>"',;|]+\.[A-Za-z]{2,}/g, "[buyer email]");
@@ -212,6 +242,8 @@ function buildPrompt(input: WriteInput): string {
   ].join("\n");
 }
 
+export const CASE_MAX_TOKENS = 4096;
+
 export async function writeCase(
   input: WriteInput,
   deps: { askJson?: Ask } = {},
@@ -219,14 +251,17 @@ export async function writeCase(
   const ask = deps.askJson ?? defaultAskJson;
   const fallback = () => ({ draft: templateCase(input.folder, input.requirements), usedFallback: true });
   const prompt = buildPrompt(input);
+  const summary = caseSummary(input.folder, input.requirements);
 
   let user = prompt;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await ask({ system: SYSTEM, user, schema: caseDraftSchema, maxTokens: 2000 });
+    const res = await ask({ system: SYSTEM, user, schema: caseBodySchema, maxTokens: CASE_MAX_TOKENS, tier: "quality" });
     if (!res.ok && res.reason !== "invalid") return fallback();
     if (res.ok) {
-      const v = validateClaims(res.data, input.folder);
-      if (v.ok) return { draft: res.data, usedFallback: false };
+      // Only the cited entries are taken from the model; anything else it returns is dropped.
+      const draft: CaseDraft = { summary, timeline: res.data.timeline, argument: res.data.argument };
+      const v = validateClaims(draft, input.folder);
+      if (v.ok) return { draft, usedFallback: false };
       user = `${prompt}\n\nYour previous draft was rejected. Fix every problem, using only the evidence above:\n- ${v.problems.join("\n- ")}`;
     } else {
       user = `${prompt}\n\nYour previous answer was not valid JSON of the required shape. Return exactly the requested JSON.`;

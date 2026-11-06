@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { templateCase, validateClaims, writeCase, type CaseDraft } from "@/lib/defense/case";
+import { CASE_MAX_TOKENS, CITATION_CLAIM, caseNotes, caseSummary, templateCase, validateClaims, writeCase, type CaseDraft } from "@/lib/defense/case";
 import { REASON_REQUIREMENTS } from "@/lib/evidence/requirements";
 import type { EvidenceItem } from "@/lib/evidence/folder";
 
@@ -21,7 +21,6 @@ const good: CaseDraft = {
   summary: "The order was shipped and delivered.",
   timeline: [{ at: "2026-11-09", text: "Delivered on 2026-11-09 for the $60.00 order", evidenceIds: ["ev:delivery:S1", "ev:order:O1"] }],
   argument: [{ text: "Tracking 9400111899223344556677 shows delivery.", evidenceIds: ["ev:tracking:S1"] }],
-  sellerNote: "",
 };
 
 describe("validateClaims", () => {
@@ -87,9 +86,9 @@ describe("validateClaims", () => {
     expect(validateClaims(d, folder).ok).toBe(true);
   });
 
-  it("summary and sellerNote may cite nothing but not invent figures", () => {
+  it("summary may cite nothing but not invent figures", () => {
     expect(validateClaims({ ...good, summary: "Refund of $99 due." }, folder).ok).toBe(false);
-    expect(validateClaims({ ...good, sellerNote: "Shipped 2026-12-31" }, folder).ok).toBe(false);
+    expect(validateClaims({ ...good, summary: "Shipped 2026-12-31" }, folder).ok).toBe(false);
   });
 });
 
@@ -132,7 +131,35 @@ describe("writeCase", () => {
   it("retries once and accepts a corrected draft", async () => {
     const askJson = vi.fn().mockResolvedValueOnce({ ok: true, data: bad }).mockResolvedValueOnce({ ok: true, data: good });
     const r = await writeCase(input, { askJson });
-    expect(r).toEqual({ draft: good, usedFallback: false });
+    expect(r).toEqual({ draft: { summary: caseSummary(folder, reqs), timeline: good.timeline, argument: good.argument }, usedFallback: false });
+  });
+
+  it("retries after an invalid (unparseable) answer instead of falling back at once", async () => {
+    const askJson = vi.fn().mockResolvedValueOnce({ ok: false, reason: "invalid" }).mockResolvedValueOnce({ ok: true, data: good });
+    const r = await writeCase(input, { askJson });
+    expect(askJson).toHaveBeenCalledTimes(2);
+    expect(r.usedFallback).toBe(false);
+  });
+
+  it("keeps no AI free text: summary is built in code and sellerNote is dropped", async () => {
+    const data = { ...good, summary: "We always ship fast, trust us.", sellerNote: "Please rule for me." };
+    const askJson = vi.fn().mockResolvedValue({ ok: true, data });
+    const r = await writeCase(input, { askJson });
+    expect(r.usedFallback).toBe(false);
+    expect(r.draft.summary).toBe(caseSummary(folder, reqs));
+    expect(Object.keys(r.draft).sort()).toEqual(["argument", "summary", "timeline"]);
+    expect(JSON.stringify(r.draft)).not.toContain("trust us");
+  });
+
+  it("asks the quality tier for the case body only, with a 4096-token budget", async () => {
+    const askJson = vi.fn().mockResolvedValue({ ok: true, data: good });
+    await writeCase(input, { askJson });
+    const opts = askJson.mock.calls[0][0];
+    expect(opts.tier).toBe("quality");
+    expect(opts.maxTokens).toBe(CASE_MAX_TOKENS);
+    expect(CASE_MAX_TOKENS).toBe(4096);
+    expect(opts.system).not.toMatch(/sellerNote|summary,/);
+    expect(opts.schema.safeParse({ timeline: [], argument: [] }).success).toBe(true);
   });
 
   it("capped AI -> template, usedFallback true, no retry", async () => {
@@ -157,6 +184,44 @@ describe("writeCase", () => {
 const cite = (text: string, ids = ["ev:delivery:S1"]): CaseDraft => ({ ...good, argument: [{ text, evidenceIds: ids }] });
 const fails = (text: string, ids?: string[]) => expect(validateClaims(cite(text, ids), folder).ok, text).toBe(false);
 const passes = (text: string, ids?: string[]) => expect(validateClaims(cite(text, ids), folder), text).toEqual({ ok: true, problems: [] });
+
+describe("caseSummary (deterministic)", () => {
+  it("states the claim, counts, coverage and the citation rule, with no figures", () => {
+    const s = caseSummary(folder, reqs);
+    expect(s).toBe(
+      "The buyer says the order never arrived. This response is built from 4 evidence items (2 simulated). " +
+        "Evidence this claim needs that is on file: tracking number, delivery confirmation, paypal ship-to address. Missing: none. " +
+        "Every timeline and argument entry cites the evidence item ids.",
+    );
+    expect(s).toContain(CITATION_CLAIM);
+    expect(validateClaims({ ...good, summary: s }, folder).ok).toBe(true);
+  });
+  it("lists what is missing", () => {
+    const s = caseSummary(folder.slice(0, 1), reqs);
+    expect(s).toContain("built from 1 evidence item.");
+    expect(s).toContain("on file: none. Missing: tracking number, delivery confirmation, paypal ship-to address.");
+  });
+  it("templateCase uses it", () => {
+    expect(templateCase(folder, reqs).summary).toBe(caseSummary(folder, reqs));
+  });
+});
+
+describe("caseNotes (what PayPal receives)", () => {
+  const draft: CaseDraft = { summary: "Summary line.", timeline: good.timeline, argument: good.argument };
+  it("is the summary plus every entry with its evidence ids", () => {
+    expect(caseNotes(draft)).toBe(
+      "Summary line.\n\nTimeline:\n- 2026-11-09 Delivered on 2026-11-09 for the $60.00 order [ev:delivery:S1, ev:order:O1]" +
+        "\n\nWhy this answers the claim:\n- Tracking 9400111899223344556677 shows delivery. [ev:tracking:S1]",
+    );
+  });
+  it("cuts at whole lines within the limit", () => {
+    const many: CaseDraft = { ...draft, argument: Array.from({ length: 60 }, (_, i) => ({ text: `Point ${i} ${"x".repeat(40)}`, evidenceIds: ["ev:order:O1"] })) };
+    const n = caseNotes(many);
+    expect(n.length).toBeLessThanOrEqual(2000);
+    expect(n.length).toBeGreaterThan(1900);
+    expect(n.split("\n").every((l) => l === "" || l.endsWith("]") || l.endsWith(":") || l === "Summary line.")).toBe(true);
+  });
+});
 
 describe("timeline.at", () => {
   it("fabricated at fails; at matching a cited item date or empty passes", () => {

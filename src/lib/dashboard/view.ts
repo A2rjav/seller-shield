@@ -1,6 +1,8 @@
 import { formatMoney } from "@/lib/format";
 import type { Gap, GapCode, ProtectionResult } from "@/lib/protection/rules";
 
+export { isCoveredBySellerProtection, SELLER_PROTECTION_COVERED_REASONS } from "@/lib/protection/covered";
+
 /** Status colours always come with a text label; tone picks the colour, never the meaning. */
 export type Tone = "green" | "amber" | "red" | "gray" | "blue";
 export type Badge = { label: string; tone: Tone };
@@ -61,9 +63,16 @@ export function reasonLabel(reason: string): string {
   return REASON_LABEL[reason] ?? "Other";
 }
 
-/** US Seller Protection does not cover Significantly Not as Described claims. */
-export function isCoveredBySellerProtection(reason: string): boolean {
-  return reason !== "MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED";
+/** "Protected" copy is qualified when the delivery confirmation comes from the demo carrier. */
+export function protectedText(text: string, deliverySimulated: boolean): string {
+  return deliverySimulated ? `${text} (delivery Simulated)` : text;
+}
+
+/** PayPal accepts offers only before the chargeback stage; null when an offer is allowed. */
+export function offerBlockedReason(stage: string | null | undefined): string | null {
+  return stage?.toUpperCase() === "CHARGEBACK"
+    ? "Offers are not possible at the chargeback stage: submit evidence or accept the claim."
+    : null;
 }
 
 const titleCase = (s: string) => s.toLowerCase().replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());

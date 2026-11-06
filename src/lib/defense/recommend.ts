@@ -5,10 +5,10 @@
 export const DISPUTE_FEE_CENTS = 1500;
 
 import type { PaypalReason } from "@/lib/evidence/requirements";
+import { isCoveredBySellerProtection } from "@/lib/protection/covered";
 
 /** Max win chance for claim types PayPal Seller Protection does not cover (only INR and unauthorised are covered). */
 export const UNCOVERED_MAX_WIN_PROBABILITY = 0.35;
-const COVERED_REASONS: PaypalReason[] = ["MERCHANDISE_OR_SERVICE_NOT_RECEIVED", "UNAUTHORISED"];
 const CAP_NOTE = "Seller Protection does not cover this claim type, so the estimate is capped.";
 
 export type Action = "fight" | "offer" | "refund";
@@ -45,7 +45,7 @@ export function recommend(input: {
 }): Recommendation {
   const { amountCents, itemCostCents, disputeFeeCents: fee } = input;
   const score = Math.min(1, Math.max(0, input.coverageScore));
-  const uncovered = input.reason !== undefined && !COVERED_REASONS.includes(input.reason);
+  const uncovered = input.reason !== undefined && !isCoveredBySellerProtection(input.reason);
   const raw = 0.15 + 0.7 * score;
   const p = uncovered ? Math.min(raw, UNCOVERED_MAX_WIN_PROBABILITY) : raw;
   const note = uncovered ? ` ${CAP_NOTE}` : "";

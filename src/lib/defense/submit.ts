@@ -5,7 +5,8 @@ import { REASON_REQUIREMENTS } from "@/lib/evidence/requirements";
 import { ingestDispute } from "@/lib/disputes/ingest";
 import * as paypalDisputes from "@/lib/paypal/disputes";
 import { caseId, resolveReason, type StoredRecommendation } from "./build-case";
-import { validateClaims, type CaseDraft } from "./case";
+import { caseNotes, validateClaims, type CaseDraft } from "./case";
+import { offerBlockedReason } from "@/lib/dashboard/view";
 
 export type SubmitResult = { submitted: boolean; simulated?: boolean; paypalStatus?: string; error?: string };
 export type SubmitApi = Pick<typeof paypalDisputes, "provideEvidence" | "makeOffer" | "acceptClaim" | "getDispute">;
@@ -86,7 +87,7 @@ export async function submitCase(db: Db, disputeId: string, body: unknown, deps:
     }
 
     const draft = row.draft as CaseDraft;
-    const notes = [draft.summary, draft.sellerNote].filter(Boolean).join("\n\n").slice(0, 2000) || "Evidence attached.";
+    const notes = caseNotes(draft);
     const evidenceType = REASON_REQUIREMENTS[resolveReason(dispute.reason)].paypalEvidenceType;
     try {
       await api.provideEvidence(disputeId, { notes, evidenceType, pdf: row.pdfBytes });
@@ -120,6 +121,8 @@ export async function submitOffer(
   return withActionLock(db, disputeId, async () => {
     const dispute = (await loadDispute(db, disputeId))!;
     if (isResolved(dispute.status)) return refuse("This dispute is already resolved.");
+    const blocked = offerBlockedReason(dispute.stage);
+    if (blocked) return refuse(blocked);
     const row = await loadCase(db, disputeId);
     const prior = (row?.submitResult ?? null) as PriorResult;
     if (prior?.action === "offer" && prior.disputeStatus === dispute.status) {

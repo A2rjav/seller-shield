@@ -7,6 +7,9 @@ import {
   formatEv,
   GAP_TITLE,
   isCoveredBySellerProtection,
+  offerBlockedReason,
+  protectedText,
+  SELLER_PROTECTION_COVERED_REASONS,
   mandateBadge,
   mandateStateOf,
   protectionBadge,
@@ -47,6 +50,22 @@ describe("labels", () => {
     expect(reasonLabel("MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED")).toBe("Not as described");
     expect(reasonLabel("UNAUTHORISED")).toBe("Unauthorized payment");
     expect(reasonLabel("SOMETHING_NEW")).toBe("Other");
+  });
+  it("protected copy says when delivery is simulated (I2)", () => {
+    expect(protectedText("All requirements met", false)).toBe("All requirements met");
+    expect(protectedText("All requirements met", true)).toBe("All requirements met (delivery Simulated)");
+  });
+  it("one shared covered-reasons list: only item-not-received and unauthorised (M1)", () => {
+    expect([...SELLER_PROTECTION_COVERED_REASONS]).toEqual(["MERCHANDISE_OR_SERVICE_NOT_RECEIVED", "UNAUTHORISED"]);
+    expect(isCoveredBySellerProtection("UNAUTHORISED")).toBe(true);
+    expect(isCoveredBySellerProtection("DUPLICATE_TRANSACTION")).toBe(false);
+    expect(isCoveredBySellerProtection("OTHER")).toBe(false);
+  });
+  it("offers are blocked at the chargeback stage, with a reason (M9)", () => {
+    expect(offerBlockedReason("CHARGEBACK")).toMatch(/chargeback/i);
+    expect(offerBlockedReason("chargeback")).toMatch(/chargeback/i);
+    expect(offerBlockedReason("INQUIRY")).toBeNull();
+    expect(offerBlockedReason(null)).toBeNull();
   });
   it("knows Not As Described is outside Seller Protection", () => {
     expect(isCoveredBySellerProtection("MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED")).toBe(false);

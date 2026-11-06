@@ -128,7 +128,7 @@ export default async function DemoPage() {
       <Step n={5} title="Defend it">
         <p>
           Open the <Link href="/dashboard/disputes" className={A}>disputes inbox</Link>. Seller Shield gathers the evidence, recommends fight or accept, and drafts a case
-          where every sentence cites its evidence. Nothing is sent to PayPal until Maya clicks submit.
+          where every timeline and argument entry cites its evidence. Nothing is sent to PayPal until Maya clicks submit.
         </p>
       </Step>
 

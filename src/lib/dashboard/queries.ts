@@ -24,6 +24,8 @@ export type OrderRow = {
   firstGapText: string | null;
   fix: Gap["fix"];
   hasShipment: boolean;
+  /** A delivered shipment whose delivery confirmation is simulated (demo carrier). */
+  deliverySimulated: boolean;
   coverage: { score: number; missing: ReadinessKind[] };
   dispute: { id: string; status: string; reason: string; simulated: boolean } | null;
   devFixture: boolean;
@@ -72,6 +74,7 @@ export async function listOrderRows(db: Db): Promise<OrderRow[]> {
       firstGapText: gaps[0] ? FALLBACK_TEXT[gaps[0].code] : null,
       fix: gaps.find((g) => g.fix)?.fix ?? null,
       hasShipment: orderShips.length > 0,
+      deliverySimulated: orderShips.some((s) => s.status === "delivered" && s.simulated),
       coverage: { score: cov.score, missing: cov.missing },
       dispute: d ? { id: d.id, status: d.status, reason: d.reason, simulated: d.simulated } : null,
       devFixture: isDevFixture(o.raw),

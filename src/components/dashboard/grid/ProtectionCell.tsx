@@ -2,7 +2,7 @@
 
 import type { CustomCellRendererProps } from "ag-grid-react";
 import type { OrderRow } from "@/lib/dashboard/queries";
-import { GAP_TITLE, protectionBadge } from "@/lib/dashboard/view";
+import { GAP_TITLE, protectedText, protectionBadge } from "@/lib/dashboard/view";
 import Badge from "../Badge";
 
 export default function ProtectionCell({ data }: CustomCellRendererProps<OrderRow>) {
@@ -21,7 +21,7 @@ export default function ProtectionCell({ data }: CustomCellRendererProps<OrderRo
           {more > 0 ? <span className="text-muted/80"> +{more} more</span> : null}
         </span>
       ) : data.status === "protected" ? (
-        <span className="truncate text-xs text-muted">All requirements met</span>
+        <span className="truncate text-xs text-muted">{protectedText("All requirements met", data.deliverySimulated)}</span>
       ) : null}
     </div>
   );
