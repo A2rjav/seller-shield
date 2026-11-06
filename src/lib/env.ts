@@ -14,6 +14,7 @@ const schema = z.object({
   SANDBOX_BUYER_PASSWORD: req,
   GEMINI_API_KEY: req,
   GEMINI_MODEL: opt,
+  GEMINI_MODEL_FAST: opt,
   DATABASE_URL: req,
   APP_BASE_URL: z.preprocess(blank, z.string().url().default("http://localhost:3000")),
   AI_DAILY_CALL_LIMIT: z.preprocess(blank, z.coerce.number().int().positive().default(300)),
@@ -62,11 +63,12 @@ export function getPaypalConfig(source: Record<string, string | undefined> = pro
   return { clientId: d.PAYPAL_CLIENT_ID, clientSecret: d.PAYPAL_CLIENT_SECRET, apiBase: url.origin };
 }
 
-export type AiConfig ={ apiKey: string; model?: string; dailyLimit: number };
+export type AiConfig = { apiKey: string; model?: string; modelFast?: string; dailyLimit: number };
 
 const aiSchema = z.object({
   GEMINI_API_KEY: req,
   GEMINI_MODEL: opt,
+  GEMINI_MODEL_FAST: opt,
   AI_DAILY_CALL_LIMIT: z.preprocess(blank, z.coerce.number().int().positive().default(300)),
 });
 
@@ -78,7 +80,7 @@ export function getAiConfig(source: Record<string, string | undefined> = process
     throw new Error(`Invalid or missing environment variables: ${keys.join(", ")}`);
   }
   const d = parsed.data;
-  return { apiKey: d.GEMINI_API_KEY, model: d.GEMINI_MODEL, dailyLimit: d.AI_DAILY_CALL_LIMIT };
+  return { apiKey: d.GEMINI_API_KEY, model: d.GEMINI_MODEL, modelFast: d.GEMINI_MODEL_FAST, dailyLimit: d.AI_DAILY_CALL_LIMIT };
 }
 
 /** Narrow accessor for the webhook id. Undefined when unset, so callers can fail closed with a clear message. */

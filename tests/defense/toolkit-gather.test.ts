@@ -120,6 +120,20 @@ describe("createToolkitAgent", () => {
     expect(r.ok && r.calls.map((c) => c.tool)).toEqual(["get_dispute", "get_order", "get_shipment_tracking"]);
   });
 
+  it("makes no SDK retries: a retryable model error is one call, not three (I3)", async () => {
+    const { APICallError } = await import("ai");
+    let calls = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: (async () => {
+        calls++;
+        throw new APICallError({ message: "overloaded", url: "u", requestBodyValues: {}, statusCode: 503, isRetryable: true });
+      }) as never,
+    });
+    const agent = createToolkitAgent({ consume: async () => true, loadTools: async () => ({}), loadModel: async () => model });
+    await agent({ disputeId: "PP-D-77" });
+    expect(calls).toBe(1);
+  });
+
   it("never runs more than 4 steps", async () => {
     const h = harness(100, Array.from({ length: 10 }, () => callStep("get_dispute", { dispute_id: "PP-D-77" })));
     await h.agent({ disputeId: "PP-D-77" });

@@ -30,6 +30,12 @@ describe("explainGaps", () => {
       { code: "tracking_not_on_paypal", text: FALLBACK_TEXT.tracking_not_on_paypal },
     ]);
   });
+  it("asks the fast tier with a 1024-token budget (I3)", async () => {
+    ask.mockClear();
+    ask.mockResolvedValueOnce({ ok: false, reason: "cap" });
+    await explainGaps(result, order);
+    expect(ask.mock.calls[0][0]).toMatchObject({ tier: "fast", maxTokens: 1024 });
+  });
   it("makes no AI call when there are no gaps", async () => {
     ask.mockClear();
     const r = await explainGaps({ status: "protected", gaps: [] }, order);

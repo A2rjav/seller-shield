@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
-import { createAi, createDbUsageStore, pickModel, resolveModel, utcDay, type UsageStore } from "@/lib/ai/gemini";
+import { NoObjectGeneratedError, TypeValidationError } from "ai";
+import { createAi, createDbUsageStore, generationOptions, pickModel, resolveModel, utcDay, type UsageStore } from "@/lib/ai/gemini";
 import { getAiConfig } from "@/lib/env";
 import { createTestDb } from "../helpers/testDb";
 
@@ -66,6 +67,33 @@ describe("createAi", () => {
     expect(await ai.askJson(opts)).toEqual({ ok: false, reason: "error", rateLimited: true });
   });
 
+  it("maps the AI SDK's NoObjectGeneratedError to invalid, so the caller's retry path runs (I3)", async () => {
+    const err = new NoObjectGeneratedError({
+      message: "No object generated: could not parse the response.",
+      text: "{not json",
+      response: { id: "r", timestamp: new Date(0), modelId: "m" },
+      usage: { inputTokens: undefined, outputTokens: undefined, totalTokens: undefined } as never,
+      finishReason: "stop" as never,
+    });
+    const ai = createAi({ generate: async () => { throw err; }, usageStore: store(0), limit: 300 });
+    expect(await ai.askJson(opts)).toEqual({ ok: false, reason: "invalid" });
+  });
+
+  it("maps a schema validation failure thrown by the SDK to invalid (I3)", async () => {
+    const err = new TypeValidationError({ value: { nope: 1 }, cause: new Error("bad shape") });
+    const ai = createAi({ generate: async () => { throw err; }, usageStore: store(0), limit: 300 });
+    expect(await ai.askJson(opts)).toEqual({ ok: false, reason: "invalid" });
+  });
+
+  it("passes the tier to the model call: fast unless the caller asks for quality (I3)", async () => {
+    const generate = vi.fn(async () => ({ summary: "x" }));
+    const ai = createAi({ generate, usageStore: store(0), limit: 300 });
+    await ai.askJson(opts);
+    await ai.askJson({ ...opts, tier: "quality" });
+    expect((generate.mock.calls[0] as unknown[])[0]).toMatchObject({ tier: "fast" });
+    expect((generate.mock.calls[1] as unknown[])[0]).toMatchObject({ tier: "quality" });
+  });
+
   it("aiCallsToday reads the store", async () => {
     const ai = createAi({ generate: vi.fn(), usageStore: store(7), limit: 300 });
     expect(await ai.aiCallsToday()).toBe(7);
@@ -123,6 +151,33 @@ describe("model resolution", () => {
     expect(pickModel([m("gemini-3-pro-preview")])).toBeUndefined();
   });
 
+  it("pickModel fast tier picks the newest stable flash; quality the newest stable pro (I3)", () => {
+    expect(pickModel(fixture, "fast")).toBe("gemini-3.1-flash");
+    expect(pickModel(fixture, "quality")).toBe("gemini-3.1-pro");
+    expect(pickModel([m("gemini-2.5-pro")], "fast")).toBe("gemini-2.5-pro"); // no flash: use what exists
+  });
+
+  it("each tier uses its env override without fetching (I3)", async () => {
+    const fetchFn = vi.fn();
+    expect(await resolveModel({ apiKey: "k", tier: "fast", model: "custom-pro", modelFast: "custom-flash", fetchFn: fetchFn as never })).toBe("custom-flash");
+    expect(await resolveModel({ apiKey: "k", tier: "quality", model: "custom-pro", modelFast: "custom-flash", fetchFn: fetchFn as never })).toBe("custom-pro");
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("both tiers share one cached model listing (I3)", async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ models: fixture })));
+    const cache = {};
+    expect(await resolveModel({ apiKey: "k", tier: "fast", fetchFn: fetchFn as never, cache })).toBe("gemini-3.1-flash");
+    expect(await resolveModel({ apiKey: "k", tier: "quality", fetchFn: fetchFn as never, cache })).toBe("gemini-3.1-pro");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("generationOptions: never retries; a low thinking setting only for pro models (I3)", () => {
+    expect(generationOptions("gemini-3.1-flash")).toEqual({ maxRetries: 0 });
+    expect(generationOptions("gemini-3.1-pro")).toEqual({ maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } } });
+    expect(generationOptions("gemini-2.5-pro")).toEqual({ maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingBudget: 1024 } } } });
+  });
+
   it("uses GEMINI_MODEL when set, without fetching", async () => {
     const fetchFn = vi.fn();
     expect(await resolveModel({ apiKey: "k", model: "custom-model", fetchFn: fetchFn as never })).toBe("custom-model");
@@ -132,7 +187,7 @@ describe("model resolution", () => {
   it("lists models with pagination once and caches", async () => {
     const pages = [{ models: fixture.slice(0, 2), nextPageToken: "t2" }, { models: fixture.slice(2) }];
     const fetchFn = vi.fn(async () => new Response(JSON.stringify(pages.shift())));
-    const deps = { apiKey: "k", fetchFn: fetchFn as never, cache: {} as { model?: string } };
+    const deps = { apiKey: "k", fetchFn: fetchFn as never, cache: {} };
     expect(await resolveModel(deps)).toBe("gemini-3.1-pro");
     expect(await resolveModel(deps)).toBe("gemini-3.1-pro");
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -151,8 +206,10 @@ describe("getAiConfig", () => {
     expect(getAiConfig({ GEMINI_API_KEY: "k", GEMINI_MODEL: "", AI_DAILY_CALL_LIMIT: "" })).toEqual({
       apiKey: "k",
       model: undefined,
+      modelFast: undefined,
       dailyLimit: 300,
     });
+    expect(getAiConfig({ GEMINI_API_KEY: "k", GEMINI_MODEL_FAST: "f" }).modelFast).toBe("f");
   });
   it("requires the key and names it without values", () => {
     expect(() => getAiConfig({})).toThrow(/GEMINI_API_KEY/);

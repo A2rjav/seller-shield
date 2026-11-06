@@ -1,5 +1,5 @@
 import { generateText, stepCountIs, tool } from "ai";
-import { getGeminiModel, tryConsumeAiCall } from "@/lib/ai/gemini";
+import { getGeminiModel, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
 import { getPaypalConfig } from "@/lib/env";
 import { toCents } from "@/lib/money";
 import { getDispute as restGetDispute, type PaypalDispute } from "@/lib/paypal/disputes";
@@ -218,6 +218,7 @@ export function createToolkitAgent(deps: {
       }
       await generateText({
         model: await deps.loadModel(),
+        ...TOOL_LOOP_OPTIONS,
         tools,
         stopWhen: stepCountIs(MAX_AGENT_STEPS),
         prepareStep: async () => {
@@ -237,7 +238,7 @@ export function createToolkitAgent(deps: {
 /** Default agent wiring: real Toolkit (sandbox, read-only), real Gemini model, DB-backed AI cap. */
 export const runToolkitAgent: RunAgent = createToolkitAgent({
   consume: tryConsumeAiCall,
-  loadModel: getGeminiModel,
+  loadModel: () => getGeminiModel("fast"),
   loadTools: async () => {
     const { PayPalAgentToolkit } = await import("@paypal/agent-toolkit/ai-sdk");
     const cfg = getPaypalConfig();

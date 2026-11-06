@@ -36,6 +36,8 @@ const schema = z.object({ lines: z.array(z.object({ code: z.string(), text: z.st
 const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 const place = (a: Address | null) => (a ? `${a.city}, ${a.state}` : "unknown");
 
+export const EXPLAIN_MAX_TOKENS = 1024;
+
 export async function explainGaps(
   result: ProtectionResult,
   order: ExplainOrder,
@@ -54,7 +56,8 @@ export async function explainGaps(
       "You help a small US seller keep PayPal Seller Protection. For each gap code given, write one plain, friendly sentence of at most 25 words saying what is wrong and what to do. Use only the facts provided. Do not invent facts, numbers, dates or policy details. Return every gap code exactly as given.",
     user: JSON.stringify(facts),
     schema,
-    maxTokens: 600,
+    maxTokens: EXPLAIN_MAX_TOKENS,
+    tier: "fast",
   }).catch(() => ({ ok: false as const, reason: "error" as const }));
 
   const byCode = new Map<string, string>();

@@ -1,6 +1,6 @@
 import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
-import { getGeminiModel, tryConsumeAiCall } from "@/lib/ai/gemini";
+import { getGeminiModel, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
 import { getProduct, products } from "@/lib/catalog";
 import type { Db } from "@/lib/db/client";
 import { formatMoney } from "@/lib/format";
@@ -118,7 +118,8 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
   const consume = deps.consume ?? tryConsumeAiCall;
   try {
     const result = await generateText({
-      model: await (deps.loadModel ?? getGeminiModel)(),
+      model: await (deps.loadModel ?? (() => getGeminiModel("fast")))(),
+      ...TOOL_LOOP_OPTIONS,
       tools,
       stopWhen: stepCountIs(MAX_SHOPPER_STEPS),
       prepareStep: async () => {

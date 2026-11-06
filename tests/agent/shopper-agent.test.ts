@@ -102,6 +102,27 @@ describe("runShopperChat tool loop", () => {
   });
 });
 
+describe("runShopperChat retries", () => {
+  it("makes no SDK retries: a retryable model error is one call (I3)", async () => {
+    const { MockLanguageModelV4 } = await import("ai/test");
+    const { APICallError } = await import("ai");
+    const { db, s, checkoutDeps, agentSigner } = await mk();
+    let calls = 0;
+    const model = new MockLanguageModelV4({
+      doGenerate: (async () => {
+        calls++;
+        throw new APICallError({ message: "overloaded", url: "u", requestBodyValues: {}, statusCode: 503, isRetryable: true });
+      }) as never,
+    });
+    const r = await runShopperChat(
+      { db, shopperJws: s.shopperJws, messages: [{ role: "user", content: "buy" }] },
+      { consume: async () => true, loadModel: async () => model, checkoutDeps, agentSigner },
+    );
+    expect(r).toEqual({ aiUnavailable: true });
+    expect(calls).toBe(1);
+  });
+});
+
 describe("runShopperChat mid-loop failures are honest", () => {
   const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
   const searchStep = { content: [{ type: "tool-call", toolCallId: "s1", toolName: "search_products", input: JSON.stringify({ query: "hoop" }) }], finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage, warnings: [] };
