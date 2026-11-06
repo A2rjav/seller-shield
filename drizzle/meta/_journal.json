@@ -8,6 +8,13 @@
       "when": 1793946099313,
       "tag": "0000_cool_power_pack",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793949630924,
+      "tag": "0001_sour_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

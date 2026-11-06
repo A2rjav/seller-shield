@@ -88,6 +88,9 @@ export const cases = pgTable("cases", {
   submittedAt: ts("submitted_at"),
   submitResult: jsonb("submit_result"),
   usedFallback: boolean("used_fallback").notNull().default(false),
+  builtAt: ts("built_at").notNull().defaultNow(),
+  /** Set while a seller action (submit/offer/accept) is running; claimed atomically, stale after 60s. */
+  actionInFlightAt: ts("action_in_flight_at"),
 });
 
 export const protectionChecks = pgTable("protection_checks", {

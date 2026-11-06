@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb } from "../helpers/testDb";
 import { cases, disputes, orders } from "@/lib/db/schema";
-import { buildCase } from "@/lib/defense/build-case";
+import { buildCase, RebuildRefused } from "@/lib/defense/build-case";
 import { submitAccept, submitCase, submitOffer } from "@/lib/defense/submit";
 import { REASON_REQUIREMENTS } from "@/lib/evidence/requirements";
 import { templateCase } from "@/lib/defense/case";
@@ -29,6 +29,8 @@ async function setup(simulated: boolean) {
   const deps = { gather: vi.fn(async () => gathered), writeCase: write as never };
   return { db, deps, write };
 }
+
+const later = (sec: number) => () => new Date(Date.now() + sec * 1000);
 
 const fresh: PaypalDispute = {
   dispute_id: "D1", reason: "MERCHANDISE_OR_SERVICE_NOT_RECEIVED", status: "UNDER_REVIEW", update_time: "2026-11-08T00:00:00Z",
@@ -57,7 +59,7 @@ describe("buildCase", () => {
     await buildCase(db, "D1", { deps });
     await buildCase(db, "D1", { deps });
     expect(write).toHaveBeenCalledTimes(1);
-    await buildCase(db, "D1", { deps, rebuild: true });
+    await buildCase(db, "D1", { deps: { ...deps, now: later(61) }, rebuild: true });
     expect(write).toHaveBeenCalledTimes(2);
     expect((await db.select().from(cases)).length).toBe(1);
   });
@@ -94,7 +96,7 @@ describe("submitCase", () => {
     expect(api.getDispute).not.toHaveBeenCalled();
     const [row] = await db.select().from(cases);
     expect(row.submittedAt).toBeInstanceOf(Date);
-    expect(row.submitResult).toEqual({ simulated: true });
+    expect(row.submitResult).toEqual({ simulated: true, action: "evidence" });
   });
 
   it("real dispute calls provideEvidence with evidence type from REASON_REQUIREMENTS, then re-ingests", async () => {
@@ -122,7 +124,7 @@ describe("submitCase", () => {
     await buildCase(db, "D1", { deps });
     await db.update(cases).set({ draft: { summary: "", timeline: [], argument: [{ text: "x", evidenceIds: ["ev:nope"] }], sellerNote: "" } });
     expect((await submitCase(db, "D1", { sellerConfirmed: true }, { api })).error).toMatch(/evidence|valid/i);
-    await buildCase(db, "D1", { deps, rebuild: true });
+    await buildCase(db, "D1", { deps: { ...deps, now: later(61) }, rebuild: true });
     await db.update(disputes).set({ status: "RESOLVED" });
     expect((await submitCase(db, "D1", { sellerConfirmed: true }, { api })).error).toMatch(/resolved/i);
     expect(api.provideEvidence).not.toHaveBeenCalled();
@@ -144,6 +146,8 @@ describe("submitOffer / submitAccept", () => {
     const ok = await submitOffer(db, "D1", { sellerConfirmed: true }, { api });
     expect(ok.submitted).toBe(true);
     expect(api.makeOffer).toHaveBeenCalledWith("D1", expect.objectContaining({ amountCents: 3000, currency: "USD" }));
+    expect((await submitOffer(db, "D1", { sellerConfirmed: true, amountCents: 2000 }, { api })).error).toMatch(/already/i);
+    await db.update(disputes).set({ status: "WAITING_FOR_SELLER_RESPONSE" });
     await submitOffer(db, "D1", { sellerConfirmed: true, amountCents: 2000 }, { api });
     expect(api.makeOffer).toHaveBeenLastCalledWith("D1", expect.objectContaining({ amountCents: 2000 }));
   });
@@ -161,5 +165,96 @@ describe("submitOffer / submitAccept", () => {
     const s = await submitAccept(sim.db, "D1", { sellerConfirmed: true }, { api: api2 });
     expect(s).toMatchObject({ submitted: true, simulated: true });
     expect(api2.acceptClaim).not.toHaveBeenCalled();
+  });
+});
+
+describe("double-submission and rebuild guards", () => {
+  const ok = { sellerConfirmed: true };
+
+  it("second submitCase after success makes no PayPal call", async () => {
+    const { db, deps } = await setup(false);
+    await buildCase(db, "D1", { deps });
+    const api = paypal();
+    expect((await submitCase(db, "D1", ok, { api })).submitted).toBe(true);
+    await db.update(disputes).set({ status: "WAITING_FOR_SELLER_RESPONSE" });
+    const r = await submitCase(db, "D1", ok, { api });
+    expect(r).toMatchObject({ submitted: false, error: expect.stringMatching(/already submitted/i) });
+    expect(api.provideEvidence).toHaveBeenCalledTimes(1);
+    const [row] = await db.select().from(cases);
+    expect(row.submitResult).toMatchObject({ action: "evidence" });
+  });
+
+  it("concurrent submitCase calls make exactly one provideEvidence call", async () => {
+    const { db, deps } = await setup(false);
+    await buildCase(db, "D1", { deps });
+    const api = paypal();
+    api.provideEvidence.mockImplementation(() => new Promise<void>((r) => setTimeout(r, 100)));
+    const [a, b] = await Promise.all([submitCase(db, "D1", ok, { api }), submitCase(db, "D1", ok, { api })]);
+    expect([a.submitted, b.submitted].sort()).toEqual([false, true]);
+    expect([a, b].find((x) => !x.submitted)!.error).toMatch(/in progress/i);
+    expect(api.provideEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  it("accept twice makes one acceptClaim call", async () => {
+    const { db } = await setup(false);
+    const api = paypal();
+    expect((await submitAccept(db, "D1", ok, { api })).submitted).toBe(true);
+    await db.update(disputes).set({ status: "WAITING_FOR_SELLER_RESPONSE" });
+    expect((await submitAccept(db, "D1", ok, { api })).error).toMatch(/already accepted/i);
+    expect(api.acceptClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it("concurrent accepts make one acceptClaim call", async () => {
+    const { db } = await setup(false);
+    const api = paypal();
+    api.acceptClaim.mockImplementation(() => new Promise<void>((r) => setTimeout(r, 100)));
+    await Promise.all([submitAccept(db, "D1", ok, { api }), submitAccept(db, "D1", ok, { api })]);
+    expect(api.acceptClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuild after submission is refused and submittedAt is preserved", async () => {
+    const { db, deps, write } = await setup(true);
+    await buildCase(db, "D1", { deps });
+    await submitCase(db, "D1", ok, { api: paypal() });
+    const err = await buildCase(db, "D1", { deps: { ...deps, now: later(600) }, rebuild: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(RebuildRefused);
+    expect(err.code).toBe("submitted");
+    expect(write).toHaveBeenCalledTimes(1);
+    const [row] = await db.select().from(cases);
+    expect(row.submittedAt).toBeInstanceOf(Date);
+    expect(row.submitResult).toMatchObject({ action: "evidence" });
+  });
+
+  it("rebuild within 60s is refused with a retry time, after 60s it is allowed", async () => {
+    const { db, deps, write } = await setup(false);
+    await buildCase(db, "D1", { deps });
+    const err = await buildCase(db, "D1", { deps: { ...deps, now: later(10) }, rebuild: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(RebuildRefused);
+    expect(err.code).toBe("throttled");
+    expect(err.retryAfterSeconds).toBeGreaterThan(40);
+    expect(err.retryAfterSeconds).toBeLessThanOrEqual(60);
+    expect(write).toHaveBeenCalledTimes(1);
+    await buildCase(db, "D1", { deps: { ...deps, now: later(61) }, rebuild: true });
+    expect(write).toHaveBeenCalledTimes(2);
+  });
+
+  it("the in-flight lock is released after a PayPal failure", async () => {
+    const { db, deps } = await setup(false);
+    await buildCase(db, "D1", { deps });
+    const api = paypal();
+    api.provideEvidence.mockRejectedValueOnce(new Error("boom"));
+    expect((await submitCase(db, "D1", ok, { api })).error).toMatch(/rejected/i);
+    const [row] = await db.select().from(cases);
+    expect(row.actionInFlightAt).toBeNull();
+    expect(row.submittedAt).toBeNull();
+    expect((await submitCase(db, "D1", ok, { api })).submitted).toBe(true);
+    expect(api.provideEvidence).toHaveBeenCalledTimes(2);
+  });
+
+  it("a stale in-flight claim (over 60s old) does not block", async () => {
+    const { db, deps } = await setup(false);
+    await buildCase(db, "D1", { deps });
+    await db.update(cases).set({ actionInFlightAt: new Date(Date.now() - 120_000) });
+    expect((await submitCase(db, "D1", ok, { api: paypal() })).submitted).toBe(true);
   });
 });

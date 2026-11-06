@@ -21,7 +21,17 @@ export type StoredRecommendation = Recommendation & {
 export type BuildDeps = {
   gather?: (disputeId: string, ctx: { orderId?: string }) => Promise<EvidenceItem[]>;
   writeCase?: typeof defaultWriteCase;
+  now?: () => Date;
 };
+
+export const REBUILD_COOLDOWN_SECONDS = 60;
+
+/** A rebuild that is not allowed: evidence already submitted, or the case was built too recently. */
+export class RebuildRefused extends Error {
+  constructor(public code: "submitted" | "throttled", message: string, public retryAfterSeconds?: number) {
+    super(message);
+  }
+}
 
 export const caseId = (disputeId: string) => `case:${disputeId}`;
 
@@ -66,7 +76,18 @@ export async function buildCase(
   const id = caseId(disputeId);
   if (!opts.rebuild) {
     const [existing] = await db.select().from(cases).where(eq(cases.id, id));
-    if (existing) return existing;
+    if (existing?.draft) return existing;
+  } else {
+    const [existing] = await db.select().from(cases).where(eq(cases.id, id));
+    if (existing?.submittedAt) {
+      throw new RebuildRefused("submitted", "Evidence has already been submitted for this dispute; the case can no longer be rebuilt.");
+    }
+    const now = (opts.deps?.now ?? (() => new Date()))();
+    const wait = existing?.draft ? REBUILD_COOLDOWN_SECONDS - (now.getTime() - existing.builtAt.getTime()) / 1000 : 0;
+    if (wait > 0) {
+      const retryAfterSeconds = Math.ceil(wait);
+      throw new RebuildRefused("throttled", `This case was built moments ago. Try again in ${retryAfterSeconds}s.`, retryAfterSeconds);
+    }
   }
 
   const gather = opts.deps?.gather ?? defaultGather;
@@ -106,8 +127,7 @@ export async function buildCase(
     recommendation: { ...rec, coverage: cov, evidence } satisfies StoredRecommendation,
     draft: draft satisfies CaseDraft,
     pdfBytes,
-    submittedAt: null,
-    submitResult: null,
+    builtAt: (opts.deps?.now ?? (() => new Date()))(),
     usedFallback,
   };
   const [row] = await db

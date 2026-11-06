@@ -1,5 +1,5 @@
 import { db } from "@/lib/db/client";
-import { buildCase } from "@/lib/defense/build-case";
+import { buildCase, RebuildRefused } from "@/lib/defense/build-case";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +12,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { pdfBytes, ...rest } = row;
     return Response.json({ ...rest, hasPdf: !!pdfBytes });
   } catch (err) {
+    if (err instanceof RebuildRefused) {
+      if (err.code === "throttled") {
+        return Response.json({ error: err.message, retryAfterSeconds: err.retryAfterSeconds }, { status: 429, headers: { "Retry-After": String(err.retryAfterSeconds) } });
+      }
+      return Response.json({ error: err.message }, { status: 409 });
+    }
     const msg = err instanceof Error ? err.message : "error";
     if (/not found/i.test(msg)) return Response.json({ error: msg }, { status: 404 });
     console.error("Case build failed", id, msg);
