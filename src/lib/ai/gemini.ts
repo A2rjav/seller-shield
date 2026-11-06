@@ -186,3 +186,20 @@ export function askJson<T>(opts: AskOpts<T>): Promise<AskResult<T>> {
 export function aiCallsToday(): Promise<number> {
   return getDefaultAi().aiCallsToday();
 }
+
+/** Counts one call against the daily cap (for callers that use the model outside askJson). False when capped or unavailable. */
+export async function tryConsumeAiCall(): Promise<boolean> {
+  try {
+    const { dailyLimit } = getAiConfig();
+    return await createDbUsageStore(getDb(), dailyLimit).tryIncrement();
+  } catch {
+    return false;
+  }
+}
+
+/** The configured Gemini model for tool-calling loops (same resolution as askJson). */
+export async function getGeminiModel() {
+  const cfg = getAiConfig();
+  const modelId = await resolveModel({ apiKey: cfg.apiKey, model: cfg.model });
+  return createGoogleGenerativeAI({ apiKey: cfg.apiKey })(modelId);
+}

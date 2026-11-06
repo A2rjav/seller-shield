@@ -5,7 +5,7 @@ import { STORE_POLICY } from "@/lib/store-policy";
 
 export type EvidenceKind =
   | "order" | "capture" | "ship_address" | "tracking" | "delivery" | "signature"
-  | "buyer_message" | "policy_at_checkout" | "mandate" | "payer_approval" | "agent_identity" | "refund";
+  | "buyer_message" | "policy_at_checkout" | "mandate" | "payer_approval" | "agent_identity" | "refund" | "dispute";
 
 export type EvidenceItem = {
   id: string;
