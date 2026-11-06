@@ -36,3 +36,22 @@ export function getEnv(source: Record<string, string | undefined> = process.env)
   if (isProcess) cached = parsed.data;
   return parsed.data;
 }
+
+export type AiConfig = { apiKey: string; model?: string; dailyLimit: number };
+
+const aiSchema = z.object({
+  GEMINI_API_KEY: req,
+  GEMINI_MODEL: opt,
+  AI_DAILY_CALL_LIMIT: z.preprocess(blank, z.coerce.number().int().positive().default(300)),
+});
+
+/** Narrow accessor: validates only the AI keys so AI code does not need the PayPal/DB keys. */
+export function getAiConfig(source: Record<string, string | undefined> = process.env): AiConfig {
+  const parsed = aiSchema.safeParse(source);
+  if (!parsed.success) {
+    const keys = [...new Set(parsed.error.issues.map((i) => String(i.path[0])))];
+    throw new Error(`Invalid or missing environment variables: ${keys.join(", ")}`);
+  }
+  const d = parsed.data;
+  return { apiKey: d.GEMINI_API_KEY, model: d.GEMINI_MODEL, dailyLimit: d.AI_DAILY_CALL_LIMIT };
+}
