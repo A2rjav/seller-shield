@@ -1,7 +1,9 @@
 import { boolean, customType, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
-const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+/** Always reads back as Uint8Array (PGlite returns Uint8Array, postgres-js a Buffer). */
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
   dataType: () => "bytea",
+  fromDriver: (v) => new Uint8Array(v),
 });
 
 const ts = (name: string) => timestamp(name, { withTimezone: true });
