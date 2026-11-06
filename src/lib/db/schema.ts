@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, customType, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 /** Always reads back as Uint8Array (PGlite returns Uint8Array, postgres-js a Buffer). */
@@ -70,21 +71,26 @@ export const mandates = pgTable("mandates", {
   createdAt: ts("created_at").notNull().defaultNow(),
 });
 
-export const disputes = pgTable("disputes", {
-  id: text("id").primaryKey(), // PayPal dispute id
-  orderId: text("order_id"),
-  captureId: text("capture_id"),
-  reason: text("reason").notNull(),
-  status: text("status").notNull(),
-  stage: text("stage").notNull(),
-  amountCents: integer("amount_cents").notNull(),
-  currency: text("currency").notNull(),
-  sellerResponseDue: ts("seller_response_due"),
-  simulated: boolean("simulated").notNull().default(false),
-  outcome: text("outcome"),
-  lastEventAt: ts("last_event_at"),
-  raw: jsonb("raw"),
-});
+export const disputes = pgTable(
+  "disputes",
+  {
+    id: text("id").primaryKey(), // PayPal dispute id
+    orderId: text("order_id"),
+    captureId: text("capture_id"),
+    reason: text("reason").notNull(),
+    status: text("status").notNull(),
+    stage: text("stage").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull(),
+    sellerResponseDue: ts("seller_response_due"),
+    simulated: boolean("simulated").notNull().default(false),
+    outcome: text("outcome"),
+    lastEventAt: ts("last_event_at"),
+    raw: jsonb("raw"),
+  },
+  // At most one open simulated dispute per order, enforced by the database so concurrent judges cannot race past it.
+  (t) => [uniqueIndex("disputes_one_open_sim_per_order").on(t.orderId).where(sql`${t.simulated} and ${t.status} <> 'RESOLVED'`)],
+);
 
 export const cases = pgTable("cases", {
   id: text("id").primaryKey(),
@@ -116,4 +122,11 @@ export const webhookEvents = pgTable("webhook_events", {
   id: text("id").primaryKey(), // PayPal event id
   type: text("type").notNull(),
   receivedAt: ts("received_at").notNull().defaultNow(),
+});
+
+/** Small key/value store for demo bookkeeping (e.g. the global reset cooldown). */
+export const demoState = pgTable("demo_state", {
+  key: text("key").primaryKey(),
+  value: jsonb("value"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
 });

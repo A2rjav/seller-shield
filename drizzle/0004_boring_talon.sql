@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "disputes_one_open_sim_per_order" ON "disputes" USING btree ("order_id") WHERE "disputes"."simulated" and "disputes"."status" <> 'RESOLVED';

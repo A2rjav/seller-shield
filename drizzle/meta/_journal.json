@@ -22,6 +22,20 @@
       "when": 1793954475669,
       "tag": "0002_tricky_orphan",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793955454151,
+      "tag": "0003_large_wendell_vaughn",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793955510448,
+      "tag": "0004_boring_talon",
+      "breakpoints": true
     }
   ]
 }
