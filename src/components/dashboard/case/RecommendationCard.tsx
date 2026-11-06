@@ -22,7 +22,7 @@ export default function RecommendationCard({
       subtitle="Expected money kept from the sale - estimates"
       actions={
         <InfoTip label="How these estimates are calculated">
-          {evFormulaText({ winProbability: rec.winProbability, amountCents, feeCents })}
+          {evFormulaText({ winProbability: rec.winProbability, capped: rec.capped, amountCents, feeCents })}
         </InfoTip>
       }
     >

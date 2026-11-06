@@ -54,6 +54,20 @@ describe("validateClaims", () => {
     expect(r.problems.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("catches fabricated month-name dates in any casing", () => {
+    for (const text of ["Delivered nov 12, 2026.", "Delivered NOVEMBER 12.", "Delivered 12 NOV 2026."]) {
+      const d = { ...good, argument: [{ text, evidenceIds: ["ev:delivery:S1"] }] };
+      expect(validateClaims(d, folder).ok, text).toBe(false);
+    }
+  });
+
+  it("accepts real month-name dates in any casing", () => {
+    for (const text of ["Delivered nov 9, 2026.", "Delivered NOVEMBER 9.", "Delivered 9 NOV 2026."]) {
+      const d = { ...good, argument: [{ text, evidenceIds: ["ev:delivery:S1"] }] };
+      expect(validateClaims(d, folder).ok, text).toBe(true);
+    }
+  });
+
   it("accepts US and month-name dates that match a cited ISO date", () => {
     const d = { ...good, argument: [{ text: "Delivered Nov 9, 2026 (11/9/2026).", evidenceIds: ["ev:delivery:S1"] }] };
     expect(validateClaims(d, folder).ok).toBe(true);

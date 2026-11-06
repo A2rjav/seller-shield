@@ -37,13 +37,13 @@ const FULL_RES: { re: RegExp; iso: (m: RegExpMatchArray) => string }[] = [
   { re: /\b(\d{4})-(\d{2})-(\d{2})/g, iso: (m) => `${m[1]}-${m[2]}-${m[3]}` },
   { re: /\b(\d{4})\/(\d{1,2})\/(\d{1,2})\b/g, iso: (m) => `${m[1]}-${pad(m[2])}-${pad(m[3])}` },
   { re: /(?<![\d/])(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, iso: (m) => `${fullYear(m[3])}-${pad(m[1])}-${pad(m[2])}` },
-  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b`, "g"), iso: (m) => `${m[3]}-${pad(monthNo(m[1]))}-${pad(m[2])}` },
-  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\.?,?\s+(\d{4})\b`, "g"), iso: (m) => `${m[3]}-${pad(monthNo(m[2]))}-${pad(m[1])}` },
+  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b`, "gi"), iso: (m) => `${m[3]}-${pad(monthNo(m[1]))}-${pad(m[2])}` },
+  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\.?,?\s+(\d{4})\b`, "gi"), iso: (m) => `${m[3]}-${pad(monthNo(m[2]))}-${pad(m[1])}` },
 ];
 // Year-less forms are compared on month-day only.
 const MD_RES: { re: RegExp; md: (m: RegExpMatchArray) => [number, number] }[] = [
-  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b`, "g"), md: (m) => [monthNo(m[1]), Number(m[2])] },
-  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\b`, "g"), md: (m) => [monthNo(m[2]), Number(m[1])] },
+  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b`, "gi"), md: (m) => [monthNo(m[1]), Number(m[2])] },
+  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\b`, "gi"), md: (m) => [monthNo(m[2]), Number(m[1])] },
   { re: /(?<![\d/.:-])(\d{1,2})\/(\d{1,2})(?![\d/])/g, md: (m) => [Number(m[1]), Number(m[2])] },
 ];
 const TOKEN_RE = /\b[A-Za-z0-9]{10,}\b/g;

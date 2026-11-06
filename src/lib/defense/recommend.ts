@@ -4,6 +4,13 @@
  */
 export const DISPUTE_FEE_CENTS = 1500;
 
+import type { PaypalReason } from "@/lib/evidence/requirements";
+
+/** Max win chance for claim types PayPal Seller Protection does not cover (only INR and unauthorised are covered). */
+export const UNCOVERED_MAX_WIN_PROBABILITY = 0.35;
+const COVERED_REASONS: PaypalReason[] = ["MERCHANDISE_OR_SERVICE_NOT_RECEIVED", "UNAUTHORISED"];
+const CAP_NOTE = "Seller Protection does not cover this claim type, so the estimate is capped.";
+
 export type Action = "fight" | "offer" | "refund";
 
 export type Recommendation = {
@@ -13,6 +20,8 @@ export type Recommendation = {
   expectedValueCents: Record<Action, number>;
   offerCents?: number;
   reason: string;
+  /** True when the win chance was capped because Seller Protection does not cover the claim type. */
+  capped?: boolean;
 };
 
 const usd = (cents: number) => `${cents < 0 ? "-" : ""}$${(Math.abs(cents) / 100).toFixed(2)}`;
@@ -23,6 +32,7 @@ const usd = (cents: number) => `${cents < 0 ? "-" : ""}$${(Math.abs(cents) / 100
  *   fight  = p * amount - (1 - p) * fee
  *   offer  = round(0.5 * amount)   (assumes the buyer accepts a 50% partial refund)
  *   refund = 0
+ * For reasons Seller Protection does not cover, p is capped at UNCOVERED_MAX_WIN_PROBABILITY.
  * Ties prefer the least risky action: refund > offer > fight.
  * An order smaller than fee + $5 is always refunded.
  */
@@ -31,10 +41,15 @@ export function recommend(input: {
   itemCostCents: number;
   disputeFeeCents: number;
   coverageScore: number;
+  reason?: PaypalReason;
 }): Recommendation {
   const { amountCents, itemCostCents, disputeFeeCents: fee } = input;
   const score = Math.min(1, Math.max(0, input.coverageScore));
-  const p = 0.15 + 0.7 * score;
+  const uncovered = input.reason !== undefined && !COVERED_REASONS.includes(input.reason);
+  const raw = 0.15 + 0.7 * score;
+  const p = uncovered ? Math.min(raw, UNCOVERED_MAX_WIN_PROBABILITY) : raw;
+  const note = uncovered ? ` ${CAP_NOTE}` : "";
+  const flag = uncovered ? { capped: true } : {};
   const offerCents = Math.round(0.5 * amountCents);
   const ev: Record<Action, number> = { fight: p * amountCents - (1 - p) * fee, offer: offerCents, refund: 0 };
   const cost = `item cost ${usd(itemCostCents)} is already spent either way`;
@@ -44,7 +59,8 @@ export function recommend(input: {
       action: "refund",
       winProbability: p,
       expectedValueCents: ev,
-      reason: `The ${usd(amountCents)} order is too small to be worth a ${usd(fee)} dispute fee risk; refund it (${cost}).`,
+      ...flag,
+      reason: `The ${usd(amountCents)} order is too small to be worth a ${usd(fee)} dispute fee risk; refund it (${cost}).${note}`,
     };
   }
 
@@ -61,6 +77,7 @@ export function recommend(input: {
     winProbability: p,
     expectedValueCents: ev,
     ...(action === "offer" ? { offerCents } : {}),
-    reason: reasons[action],
+    ...flag,
+    reason: reasons[action] + note,
   };
 }

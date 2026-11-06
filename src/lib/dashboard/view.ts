@@ -117,11 +117,12 @@ export function formatEv(cents: number): string {
 
 export const percent = (x: number) => `${Math.round(x * 100)}%`;
 
-export function evFormulaText(input: { winProbability: number; amountCents: number; feeCents: number }): string {
+export function evFormulaText(input: { winProbability: number; amountCents: number; feeCents: number; capped?: boolean }): string {
   const { winProbability: p, amountCents, feeCents } = input;
   return [
     "These are estimates, not PayPal outcomes.",
     `Win chance p = 0.15 + 0.7 x evidence coverage = ${percent(p)}.`,
+    ...(input.capped ? ["Capped at 35% for claims Seller Protection does not cover."] : []),
     `Fight = p x ${formatMoney(amountCents)} - (1 - p) x ${formatMoney(feeCents)} PayPal dispute fee.`,
     `Offer = a 50% partial refund (assumes the buyer accepts). Refund = $0 kept.`,
   ].join(" ");

@@ -112,6 +112,7 @@ export async function buildCase(
     itemCostCents: itemCostCents(order?.items),
     disputeFeeCents: DISPUTE_FEE_CENTS,
     coverageScore: cov.score,
+    reason,
   });
 
   const disputeLike = {
