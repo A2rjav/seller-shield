@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { generateKeyPair, exportJWK } from "jose";
+import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import {
   canonicalHash,
   verifyMandate,
@@ -154,6 +154,83 @@ describe("mandate", () => {
     const o = { items: [{ sku: "x", qty: 1 }], amountCents: 9999, currency: "EUR" };
     const r = await verifyMandate({ ...(await build({ o })), now: new Date("2027-01-01T00:00:00Z") });
     expect(r.failures.sort()).toEqual(["amount_over_max", "currency_mismatch", "expired", "item_not_in_mandate"]);
+  });
+
+  const signRaw = async (obj: unknown) => {
+    const input = await build();
+    return { input, jws: await signMandate(obj as MandatePayload, shopper.priv) };
+  };
+
+  it.each([
+    ["missing maxAmountCents", (p: any) => { delete p.maxAmountCents; }],
+    ["string maxAmountCents", (p: any) => { p.maxAmountCents = "6000"; }],
+    ["missing agentId", (p: any) => { delete p.agentId; }],
+    ["missing items", (p: any) => { delete p.items; }],
+    ["non-array items", (p: any) => { p.items = "ring"; }],
+    ["empty items", (p: any) => { p.items = []; }],
+    ["fractional mandate qty", (p: any) => { p.items = [{ sku: "ring-1", qty: 1.5 }]; }],
+    ["bad merchantId", (p: any) => { p.merchantId = "other"; }],
+    ["bad currency", (p: any) => { p.currency = "EUR"; }],
+    ["bad expiresAt", (p: any) => { p.expiresAt = "tomorrow"; }],
+  ])("malformed_mandate: %s (signed but ill-shaped)", async (_n, mutate) => {
+    const p: any = payload();
+    mutate(p);
+    const { input, jws } = await signRaw(p);
+    const r = await verifyMandate({ ...input, shopperJws: jws });
+    expect(r.verified).toBe(false);
+    expect(r.failures).toEqual(["malformed_mandate"]);
+    expect(r.payload).toBeUndefined();
+    expect(r.hash).toBeUndefined();
+  });
+
+  it.each([
+    ["negative qty", { items: [{ sku: "ring-1", qty: -1 }], amountCents: 5000, currency: "USD" }],
+    ["fractional qty", { items: [{ sku: "ring-1", qty: 0.5 }], amountCents: 5000, currency: "USD" }],
+    ["zero qty", { items: [{ sku: "ring-1", qty: 0 }], amountCents: 5000, currency: "USD" }],
+    ["NaN amount", { items: order.items, amountCents: NaN, currency: "USD" }],
+    ["negative amount", { items: order.items, amountCents: -5, currency: "USD" }],
+    ["fractional amount", { items: order.items, amountCents: 50.5, currency: "USD" }],
+    ["empty items", { items: [], amountCents: 5000, currency: "USD" }],
+    ["missing items", { amountCents: 5000, currency: "USD" }],
+    ["empty currency", { items: order.items, amountCents: 5000, currency: "" }],
+  ])("invalid_order: %s", async (_n, o) => {
+    const input = await build({ o: o as any });
+    const r = await verifyMandate({ ...input, order: o as any });
+    expect(r.verified).toBe(false);
+    expect(r.failures).toContain("invalid_order");
+    expect(r.failures).not.toContain("amount_over_max");
+  });
+
+  it("rejects an alg:none JWS as bad_shopper_signature", async () => {
+    const input = await build();
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const jws = `${b64({ alg: "none" })}.${b64(payload())}.`;
+    const r = await verifyMandate({ ...input, shopperJws: jws });
+    expect(r.failures).toEqual(["bad_shopper_signature"]);
+  });
+
+  it("rejects an HS256 JWS as bad_shopper_signature", async () => {
+    const input = await build();
+    const jws = await new SignJWT({ ...payload() }).setProtectedHeader({ alg: "HS256" }).sign(new TextEncoder().encode("k".repeat(32)));
+    const r = await verifyMandate({ ...input, shopperJws: jws });
+    expect(r.failures).toEqual(["bad_shopper_signature"]);
+  });
+
+  it("malformed agentJws yields bad_agent_signature", async () => {
+    const r = await verifyMandate({ ...(await build()), agentJws: "garbage" });
+    expect(r.failures).toContain("bad_agent_signature");
+  });
+
+  it("malformed shopperPublicJwk yields bad_shopper_signature", async () => {
+    const p = { ...payload(), shopperPublicJwk: { kty: "OKP", crv: "Ed25519", x: "AAAA" } } as MandatePayload;
+    const { input, jws } = await signRaw(p);
+    const r = await verifyMandate({ ...input, shopperJws: jws });
+    expect(r.failures).toEqual(["bad_shopper_signature"]);
+  });
+
+  it("never throws on garbage input", async () => {
+    const r = await verifyMandate({ shopperJws: 5, agentJws: null, agentPublicJwk: null, order: null, now: "x" } as any);
+    expect(r.verified).toBe(false);
   });
 
   it("checkPayerMatch is case-insensitive and trimmed", () => {

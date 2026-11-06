@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { CompactSign, compactVerify, importJWK, decodeProtectedHeader, type JWK, type CryptoKey, type KeyObject } from "jose";
 
 export type MandateItem = { sku: string; qty: number };
@@ -26,6 +27,8 @@ export type MandateFailure =
   | "item_not_in_mandate"
   | "currency_mismatch"
   | "agent_not_named"
+  | "malformed_mandate"
+  | "invalid_order"
   | "payer_email_mismatch"; // set later by recordCapturedOrder, never by verifyMandate
 
 type SigningKey = CryptoKey | KeyObject | JWK | Uint8Array;
@@ -53,6 +56,27 @@ export function canonicalJson(value: unknown): string {
 export function canonicalHash(payload: MandatePayload): string {
   return createHash("sha256").update(canonicalJson(payload), "utf8").digest("hex");
 }
+
+const nonEmpty = z.string().min(1);
+const itemSchema = z.object({ sku: nonEmpty, qty: z.number().int().positive() });
+const iso = z.string().datetime({ offset: true });
+const payloadSchema = z.object({
+  mandateId: nonEmpty,
+  shopperEmail: nonEmpty,
+  agentId: nonEmpty,
+  merchantId: z.literal("juniper-and-thread"),
+  items: z.array(itemSchema).min(1),
+  maxAmountCents: z.number().int().nonnegative(),
+  currency: z.literal("USD"),
+  createdAt: iso,
+  expiresAt: iso,
+  shopperPublicJwk: z.record(z.unknown()),
+});
+const orderSchema = z.object({
+  items: z.array(itemSchema).min(1),
+  amountCents: z.number().int().nonnegative(),
+  currency: nonEmpty,
+});
 
 const enc = new TextEncoder();
 
@@ -82,13 +106,25 @@ function decodePayload(jws: string): unknown {
   return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 }
 
-export async function verifyMandate(input: {
+type VerifyInput = {
   shopperJws: string;
   agentJws: string;
   agentPublicJwk: JsonWebKey;
   order: OrderRequest;
   now: Date;
-}): Promise<{ verified: boolean; payload?: MandatePayload; hash?: string; failures: MandateFailure[] }> {
+};
+type VerifyResult = { verified: boolean; payload?: MandatePayload; hash?: string; failures: MandateFailure[] };
+
+/** Never throws: any unexpected error fails closed. */
+export async function verifyMandate(input: VerifyInput): Promise<VerifyResult> {
+  try {
+    return await verifyMandateInner(input);
+  } catch {
+    return { verified: false, failures: ["bad_shopper_signature"] };
+  }
+}
+
+async function verifyMandateInner(input: VerifyInput): Promise<VerifyResult> {
   // 1. Shopper signature. The embedded key is read from the untrusted payload only to
   //    verify the signature; nothing else is evaluated unless it verifies.
   let payload: MandatePayload;
@@ -100,6 +136,10 @@ export async function verifyMandate(input: {
     payload = JSON.parse(new TextDecoder().decode(bytes)) as MandatePayload;
   } catch {
     return { verified: false, failures: ["bad_shopper_signature"] };
+  }
+
+  if (!payloadSchema.safeParse(payload).success) {
+    return { verified: false, failures: ["malformed_mandate"] };
   }
 
   const hash = canonicalHash(payload);
@@ -122,18 +162,24 @@ export async function verifyMandate(input: {
   if (kid !== payload.agentId) failures.push("agent_not_named");
 
   // 3. Policy checks against the signed mandate.
-  if (input.now.getTime() > Date.parse(payload.expiresAt) || Number.isNaN(Date.parse(payload.expiresAt))) failures.push("expired");
-  if (input.order.amountCents > payload.maxAmountCents) failures.push("amount_over_max");
-  if (input.order.currency !== payload.currency) failures.push("currency_mismatch");
+  if (!(input.now instanceof Date) || Number.isNaN(input.now.getTime()) || input.now.getTime() > Date.parse(payload.expiresAt)) failures.push("expired");
 
-  const allowed = new Map<string, number>();
-  for (const i of payload.items) allowed.set(i.sku, (allowed.get(i.sku) ?? 0) + i.qty);
-  const requested = new Map<string, number>();
-  for (const i of input.order.items) requested.set(i.sku, (requested.get(i.sku) ?? 0) + i.qty);
-  for (const [sku, qty] of requested) {
-    if (!allowed.has(sku) || qty > allowed.get(sku)!) {
-      failures.push("item_not_in_mandate");
-      break;
+  if (!orderSchema.safeParse(input.order).success) {
+    failures.push("invalid_order");
+    if (typeof input.order?.currency === "string" && input.order.currency !== payload.currency) failures.push("currency_mismatch");
+  } else {
+    if (input.order.amountCents > payload.maxAmountCents) failures.push("amount_over_max");
+    if (input.order.currency !== payload.currency) failures.push("currency_mismatch");
+
+    const allowed = new Map<string, number>();
+    for (const i of payload.items) allowed.set(i.sku, (allowed.get(i.sku) ?? 0) + i.qty);
+    const requested = new Map<string, number>();
+    for (const i of input.order.items) requested.set(i.sku, (requested.get(i.sku) ?? 0) + i.qty);
+    for (const [sku, qty] of requested) {
+      if (!allowed.has(sku) || qty > allowed.get(sku)!) {
+        failures.push("item_not_in_mandate");
+        break;
+      }
     }
   }
 
