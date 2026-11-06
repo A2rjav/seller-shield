@@ -116,7 +116,6 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
   const events: AgentEvent[] = [];
   const tools = buildShopperTools({ db: input.db, shopperJws: input.shopperJws, events, checkoutDeps: deps.checkoutDeps, agentSigner: deps.agentSigner });
   const consume = deps.consume ?? tryConsumeAiCall;
-  let steps = 0;
   try {
     const result = await generateText({
       model: await (deps.loadModel ?? getGeminiModel)(),
@@ -124,7 +123,6 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
       stopWhen: stepCountIs(MAX_SHOPPER_STEPS),
       prepareStep: async () => {
         if (!(await consume())) throw new CapReached();
-        steps++;
         return undefined;
       },
       system:
@@ -134,9 +132,11 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
         "After checkout, tell the shopper to approve the payment in PayPal. If the merchant refuses, explain why in plain words. Be brief.",
       messages: input.messages,
     } as never);
+    if (!result.text.trim() && events.length === 0) return { aiUnavailable: true };
     return { text: result.text, events };
   } catch {
-    if (steps === 0 && events.length === 0) return { aiUnavailable: true };
+    // A failure mid-loop with nothing to show (no order, no refusal) is an AI failure, not a result.
+    if (events.length === 0) return { aiUnavailable: true };
     return { text: "", events };
   }
 }

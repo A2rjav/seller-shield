@@ -101,3 +101,38 @@ describe("runShopperChat tool loop", () => {
     expect(createOrder).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("runShopperChat mid-loop failures are honest", () => {
+  const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
+  const searchStep = { content: [{ type: "tool-call", toolCallId: "s1", toolName: "search_products", input: JSON.stringify({ query: "hoop" }) }], finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage, warnings: [] };
+  const input = async () => {
+    const m = await mk();
+    return { m, args: { db: m.db, shopperJws: m.s.shopperJws, messages: [{ role: "user" as const, content: "buy" }] } };
+  };
+
+  it("model throws on step 2 -> aiUnavailable", async () => {
+    const { MockLanguageModelV4 } = await import("ai/test");
+    const { m, args } = await input();
+    let n = 0;
+    const model = new MockLanguageModelV4({ doGenerate: (async () => { if (n++ === 0) return searchStep; throw new Error("boom"); }) as never });
+    const r = await runShopperChat(args, { consume: async () => true, loadModel: async () => model, checkoutDeps: m.checkoutDeps, agentSigner: m.agentSigner });
+    expect(r).toEqual({ aiUnavailable: true });
+  });
+
+  it("cap refuses on step 2 -> aiUnavailable", async () => {
+    const { MockLanguageModelV4 } = await import("ai/test");
+    const { m, args } = await input();
+    const model = new MockLanguageModelV4({ doGenerate: [searchStep] as never });
+    let n = 0;
+    const r = await runShopperChat(args, { consume: async () => n++ === 0, loadModel: async () => model, checkoutDeps: m.checkoutDeps, agentSigner: m.agentSigner });
+    expect(r).toEqual({ aiUnavailable: true });
+  });
+
+  it("empty text and no events -> aiUnavailable", async () => {
+    const { MockLanguageModelV4 } = await import("ai/test");
+    const { m, args } = await input();
+    const model = new MockLanguageModelV4({ doGenerate: [{ content: [{ type: "text", text: "" }], finishReason: { unified: "stop", raw: "stop" }, usage, warnings: [] }] as never });
+    const r = await runShopperChat(args, { consume: async () => true, loadModel: async () => model, checkoutDeps: m.checkoutDeps, agentSigner: m.agentSigner });
+    expect(r).toEqual({ aiUnavailable: true });
+  });
+});

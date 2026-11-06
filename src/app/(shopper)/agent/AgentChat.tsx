@@ -86,7 +86,8 @@ export default function AgentChat({ clientId }: { clientId: string | null }) {
       setMsgs([...history, { role: "assistant", content: r.error }]);
     } else {
       const events = (r.events as AgentEvent[] | undefined) ?? [];
-      const text = typeof r.text === "string" && r.text ? r.text : events.length ? "" : "Done.";
+      const text = typeof r.text === "string" ? r.text : "";
+      if (!text.trim() && events.length === 0) return apply({ aiUnavailable: true }, history);
       setMsgs([...history, { role: "assistant", content: text, events }]);
     }
   }
