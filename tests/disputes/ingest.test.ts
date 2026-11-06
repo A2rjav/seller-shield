@@ -114,9 +114,20 @@ describe("handleWebhookEvent", () => {
     expect(await db.select().from(webhookEvents)).toHaveLength(0);
   });
 
-  it("does not record the event if ingest fails, so a PayPal retry can succeed", async () => {
+  it("an ingest failure rolls back the event row, and the retry is processed", async () => {
     await expect(handleWebhookEvent(db, evt({ resource: { dispute_id: "X" } }))).rejects.toThrow();
     expect(await db.select().from(webhookEvents)).toHaveLength(0);
+    expect(await db.select().from(disputes)).toHaveLength(0);
+    expect(await handleWebhookEvent(db, evt())).toBe("processed");
+    expect(await handleWebhookEvent(db, evt())).toBe("duplicate");
+  });
+
+  it("a partially applied ingest is rolled back with the event row", async () => {
+    // Valid dispute whose message has an invalid time: the dispute upsert runs first, then the message insert throws.
+    const bad = dispute({ messages: [{ posted_by: "BUYER", time_posted: "not a date", content: "x" }] });
+    await expect(handleWebhookEvent(db, evt({ resource: bad }))).rejects.toThrow();
+    expect(await db.select().from(webhookEvents)).toHaveLength(0);
+    expect(await db.select().from(disputes)).toHaveLength(0);
   });
 });
 

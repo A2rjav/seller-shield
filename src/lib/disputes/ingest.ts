@@ -83,27 +83,25 @@ export async function handleWebhookEvent(db: Db, evt: WebhookEvent): Promise<"ig
   const isDispute = DISPUTE_EVENTS.has(evt.event_type);
   if (!isDispute && !RECORD_ONLY_EVENTS.has(evt.event_type)) return "ignored";
 
-  const inserted = await db
-    .insert(webhookEvents)
-    .values({ id: evt.id, type: evt.event_type })
-    .onConflictDoNothing()
-    .returning({ id: webhookEvents.id });
-  if (inserted.length === 0) return "duplicate";
+  // Dedupe record and processing commit or roll back together: a crash or error leaves no
+  // webhook_events row, so PayPal's retry is processed; a concurrent retry waits on the unique
+  // key until this transaction ends, then sees the committed row and reports "duplicate".
+  return db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(webhookEvents)
+      .values({ id: evt.id, type: evt.event_type })
+      .onConflictDoNothing()
+      .returning({ id: webhookEvents.id });
+    if (inserted.length === 0) return "duplicate" as const;
 
-  if (isDispute) {
-    try {
+    if (isDispute) {
       const d = evt.resource as PaypalDispute;
       if (!d || typeof d.dispute_id !== "string") throw new Error("Dispute webhook resource has no dispute_id");
       const eventTime = new Date(d.update_time ?? evt.create_time);
-      await ingestDispute(db, d, { eventTime });
-    } catch (err) {
-      // Forget the event so PayPal's retry is processed instead of being dropped as a duplicate.
-      await db.delete(webhookEvents).where(eq(webhookEvents.id, evt.id));
-      throw err;
+      await ingestDispute(tx as unknown as Db, d, { eventTime });
     }
-  }
-  // PAYMENT.CAPTURE.COMPLETED / CHECKOUT.ORDER.APPROVED: recorded only; order recording is Task 8.
-  return "processed";
+    return "processed" as const;
+  });
 }
 
 type PollApi = {
