@@ -80,3 +80,9 @@ export function getAiConfig(source: Record<string, string | undefined> = process
   const d = parsed.data;
   return { apiKey: d.GEMINI_API_KEY, model: d.GEMINI_MODEL, dailyLimit: d.AI_DAILY_CALL_LIMIT };
 }
+
+/** Narrow accessor for the webhook id. Undefined when unset, so callers can fail closed with a clear message. */
+export function getWebhookId(source: Record<string, string | undefined> = process.env): string | undefined {
+  const v = source.PAYPAL_WEBHOOK_ID?.trim();
+  return v ? v : undefined;
+}
