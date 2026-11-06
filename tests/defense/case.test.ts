@@ -46,7 +46,7 @@ describe("validateClaims", () => {
   it("catches a fabricated date and a fabricated tracking number, and reports all problems", () => {
     const d: CaseDraft = {
       ...good,
-      timeline: [{ at: "x", text: "Delivered on Nov 12, 2026", evidenceIds: ["ev:delivery:S1"] }],
+      timeline: [{ at: "", text: "Delivered on Nov 12, 2026", evidenceIds: ["ev:delivery:S1"] }],
       argument: [{ text: "Tracking 9400999999999999999999 confirms it, signed 11/12/2026.", evidenceIds: ["ev:tracking:S1"] }],
     };
     const r = validateClaims(d, folder);
@@ -122,5 +122,76 @@ describe("writeCase", () => {
     expect(user).toContain("ev:delivery:S1 | delivery | 2026-11-09T15:00:00.000Z |");
     expect(user).toMatch(/\| true\b/);
     expect(user).not.toContain("trackingNumber");
+  });
+});
+
+// ---- Fix round 1 ----
+const cite = (text: string, ids = ["ev:delivery:S1"]): CaseDraft => ({ ...good, argument: [{ text, evidenceIds: ids }] });
+const fails = (text: string, ids?: string[]) => expect(validateClaims(cite(text, ids), folder).ok, text).toBe(false);
+const passes = (text: string, ids?: string[]) => expect(validateClaims(cite(text, ids), folder), text).toEqual({ ok: true, problems: [] });
+
+describe("timeline.at", () => {
+  it("fabricated at fails; at matching a cited item date or empty passes", () => {
+    const t = (at: string): CaseDraft => ({ ...good, timeline: [{ at, text: "Delivered", evidenceIds: ["ev:delivery:S1"] }] });
+    expect(validateClaims(t("2026-11-12"), folder).ok).toBe(false);
+    expect(validateClaims(t("sometime"), folder).ok).toBe(false);
+    expect(validateClaims(t("2026-11-09"), folder).ok).toBe(true);
+    expect(validateClaims(t("2026-11-09T15:00:00.000Z"), folder).ok).toBe(true);
+    expect(validateClaims(t(""), folder).ok).toBe(true);
+  });
+});
+
+describe("validator formats", () => {
+  it("year-less month-day dates", () => {
+    fails("Delivered November 12"); passes("Delivered November 9");
+    fails("Delivered Nov. 12th"); passes("Delivered Nov. 9th");
+    fails("Delivered 12/11"); passes("Delivered 11/9");
+  });
+  it("day-month order and slash ISO", () => {
+    fails("Delivered 12 November 2026"); passes("Delivered 9 November 2026");
+    fails("Delivered on 2026/11/12"); passes("Delivered on 2026/11/09");
+  });
+  it("amounts without a dollar sign and with one decimal digit", () => {
+    const o = ["ev:order:O1"];
+    fails("Paid 75 USD", o); passes("Paid 60.00 USD", o);
+    fails("Paid USD 75", o); passes("Paid USD 60", o);
+    fails("Paid 75 dollars", o); passes("Paid 60 dollars", o);
+    fails("Paid $60.5", o); passes("Paid $60.0", o);
+  });
+  it("tracking numbers: lowercase, spaced and dashed", () => {
+    fails("Tracking 9400999999999999999999 here"); fails("Tracking 9400 9999 9999 9999 9999 99");
+    fails("Tracking 9400-9999-9999-9999-9999-99");
+    passes("Tracking 9400 1118 9922 3344 5566 77"); passes("Tracking 9400-1118-9922-3344-5566-77");
+    const f2 = [item({ id: "a", kind: "tracking", summary: "Tracking AB12345678CD" })];
+    expect(validateClaims({ ...good, timeline: [], argument: [{ text: "see ab12345678cd", evidenceIds: ["a"] }] }, f2).ok).toBe(true);
+    expect(validateClaims({ ...good, timeline: [], argument: [{ text: "see zz12345678cd", evidenceIds: ["a"] }] }, f2).ok).toBe(false);
+  });
+});
+
+describe("amounts are structural, not digit runs", () => {
+  it("ZIP-derived and year-derived fake amounts fail", () => {
+    fails("Paid $972.14", ["ev:delivery:S1"]); // zip 97214
+    fails("Paid $20.26", ["ev:delivery:S1"]); // year 2026
+    fails("Paid $972.14", ["ev:ship_address:O1"]);
+  });
+  it("hex hash digits do not allow amounts, but *Cents and amount.value data keys do", () => {
+    const f = [item({ id: "m", kind: "mandate", summary: "hash 3fa9c0d1e2b4a5f6 7000", data: { maxAmountCents: 7000, amount: { currency_code: "USD", value: "42.50" }, hash: "3fa9c0d1e2b4a5f6" } })];
+    const v = (t: string) => validateClaims({ ...good, timeline: [], argument: [{ text: t, evidenceIds: ["m"] }] }, f).ok;
+    expect(v("limit $70.00")).toBe(true);
+    expect(v("charged $42.50")).toBe(true);
+    expect(v("charged $39.00")).toBe(false);
+    expect(v("charged $70.00 or $3.00")).toBe(false);
+  });
+});
+
+describe("prompt hygiene", () => {
+  it("agent folder prompt contains no buyer email", async () => {
+    const agent = [...folder, item({ id: "ev:mandate:m1", kind: "mandate", at: "2026-11-05T09:00:00.000Z", summary: "Mandate m1 for bea.buyer@example.com: max $70.00; verified: true" })];
+    const askJson = vi.fn().mockResolvedValue({ ok: true, data: good });
+    await writeCase({ dispute, folder: agent, requirements: REASON_REQUIREMENTS.UNAUTHORISED }, { askJson });
+    const { user, system } = askJson.mock.calls[0][0];
+    expect(user).not.toContain("@");
+    expect(system).not.toContain("@");
+    expect(user).toContain("[buyer email]");
   });
 });

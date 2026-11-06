@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
-import { renderEvidencePdf } from "@/lib/defense/pdf";
+import { formatRow, renderEvidencePdf } from "@/lib/defense/pdf";
 import { templateCase } from "@/lib/defense/case";
 import { REASON_REQUIREMENTS } from "@/lib/evidence/requirements";
 import type { EvidenceItem } from "@/lib/evidence/folder";
@@ -20,5 +20,15 @@ describe("renderEvidencePdf", () => {
     const doc = await PDFDocument.load(bytes);
     expect(doc.getPageCount()).toBeGreaterThanOrEqual(2);
     expect(doc.getTitle()).toContain("PP-D-4242");
+  });
+});
+
+describe("formatRow", () => {
+  const byId = new Map(folder.map((i) => [i.id, i]));
+  it("marks rows citing a simulated item, and only those", () => {
+    expect(formatRow("Delivered", ["ev:order:O1", "ev:delivery:S1"], byId, "2026-11-09T15:00:00Z")).toBe(
+      "2026-11-09  Delivered  [ev:order:O1, ev:delivery:S1] [SIMULATED]",
+    );
+    expect(formatRow("Ordered", ["ev:order:O1"], byId)).not.toContain("SIMULATED");
   });
 });

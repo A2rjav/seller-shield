@@ -1,5 +1,7 @@
+import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
-import { gatherWithToolkit, type ToolCall } from "@/lib/defense/toolkit-gather";
+import { MockLanguageModelV4 } from "ai/test";
+import { createToolkitAgent, gatherWithToolkit, redactForModel, type ToolCall } from "@/lib/defense/toolkit-gather";
 import type { PaypalDispute } from "@/lib/paypal/disputes";
 
 const dispute = {
@@ -52,5 +54,102 @@ describe("gatherWithToolkit", () => {
     const ok = vi.fn().mockResolvedValue(dispute as PaypalDispute);
     const items = await gatherWithToolkit("PP-D-77", { runAgent: vi.fn().mockResolvedValue({ ok: true, calls: [] }), getDispute: ok });
     expect(items).toHaveLength(1);
+  });
+});
+
+describe("result filtering", () => {
+  it("drops tool results for another dispute, another order, or an unrelated transaction", async () => {
+    const calls: ToolCall[] = [
+      { tool: "get_dispute", result: { ...dispute, dispute_id: "OTHER" } },
+      { tool: "get_dispute", result: dispute },
+      { tool: "get_order", result: { ...order, id: "ORD-OTHER" } },
+      { tool: "get_order", result: order },
+      { tool: "get_shipment_tracking", result: { ...tracking, transaction_id: "CAP-OTHER" } },
+    ];
+    const items = await gatherWithToolkit("PP-D-77", { orderId: "ORD1", runAgent: async () => ({ ok: true, calls }) });
+    expect(items.map((i) => i.id)).toEqual(["ev:paypal:dispute:PP-D-77", "ev:paypal:order:ORD1", "ev:paypal:capture:CAP1"]);
+  });
+});
+
+describe("redactForModel", () => {
+  it("keeps ids, amounts and dates but no emails, names or addresses", () => {
+    const rich = { ...order, payer: { email_address: "buyer@example.com", name: { given_name: "Bea" } },
+      purchase_units: [{ ...order.purchase_units[0], shipping: { name: { full_name: "Bea Buyer" }, address: { address_line_1: "12 Oak St" } } }] };
+    const v = JSON.stringify(redactForModel("get_order", JSON.stringify(rich)));
+    expect(v).not.toMatch(/@|Bea|Oak/);
+    expect(v).toContain("CAP1");
+    expect(v).toContain("60.00");
+    expect(JSON.stringify(redactForModel("get_dispute", { ...dispute, messages: [{ content: "mail me at x@y.com" }] }))).not.toContain("@");
+  });
+});
+
+// ---- Agent loop with a scripted model and fake toolkit tools ----
+const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
+const callStep = (name: string, input: object) => ({
+  content: [{ type: "tool-call" as const, toolCallId: `c-${name}`, toolName: name, input: JSON.stringify(input) }],
+  finishReason: { unified: "tool-calls" as const, raw: undefined },
+  usage, warnings: [],
+});
+const textStep = { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: undefined }, usage, warnings: [] };
+
+function harness(slots: number, steps: unknown[]) {
+  const store = { used: 0 };
+  const model = new MockLanguageModelV4({ doGenerate: steps as never });
+  const fakeTools = {
+    get_dispute: { description: "d", parameters: z.object({ dispute_id: z.string() }), execute: async () => JSON.stringify({ ...dispute, messages: [{ content: "write to a@b.com" }] }) },
+    get_order: { description: "o", parameters: z.object({ id: z.string() }), execute: async () => JSON.stringify({ ...order }) },
+    get_shipment_tracking: { description: "t", parameters: z.object({ order_id: z.string(), transaction_id: z.string() }), execute: async () => JSON.stringify(tracking) },
+    create_refund: { description: "x", parameters: z.object({}), execute: async () => "NO" },
+  };
+  const agent = createToolkitAgent({
+    consume: async () => (store.used < slots ? (store.used++, true) : false),
+    loadTools: async () => fakeTools,
+    loadModel: async () => model,
+  });
+  return { agent, store, model };
+}
+
+describe("createToolkitAgent", () => {
+  it("consumes one cap slot per model step (3 tool steps + final text = 4)", async () => {
+    const h = harness(10, [
+      callStep("get_dispute", { dispute_id: "PP-D-77" }), callStep("get_order", { id: "ORD1" }),
+      callStep("get_shipment_tracking", { order_id: "ORD1", transaction_id: "CAP1" }), textStep,
+    ]);
+    const r = await h.agent({ disputeId: "PP-D-77", orderId: "ORD1" });
+    expect(h.store.used).toBe(4);
+    expect(r.ok && r.calls.map((c) => c.tool)).toEqual(["get_dispute", "get_order", "get_shipment_tracking"]);
+  });
+
+  it("never runs more than 4 steps", async () => {
+    const h = harness(100, Array.from({ length: 10 }, () => callStep("get_dispute", { dispute_id: "PP-D-77" })));
+    await h.agent({ disputeId: "PP-D-77" });
+    expect(h.store.used).toBe(4);
+  });
+
+  it("passes the model only redacted tool results, and exposes only read-only tools", async () => {
+    const h = harness(10, [callStep("get_dispute", { dispute_id: "PP-D-77" }), textStep]);
+    await h.agent({ disputeId: "PP-D-77" });
+    const second = JSON.stringify(h.model.doGenerateCalls[1].prompt);
+    expect(second).toContain("PP-D-77");
+    expect(second).not.toContain("@");
+    expect(JSON.stringify(h.model.doGenerateCalls[0].tools)).not.toContain("create_refund");
+  });
+
+  it("when the store refuses, the loop stops and gatherWithToolkit falls back to REST", async () => {
+    const h = harness(0, [textStep]);
+    const getDispute = vi.fn().mockResolvedValue(dispute as PaypalDispute);
+    const items = await gatherWithToolkit("PP-D-77", { runAgent: h.agent, getDispute });
+    expect(h.model.doGenerateCalls).toHaveLength(0);
+    expect(getDispute).toHaveBeenCalledOnce();
+    expect(items.map((i) => i.kind)).toEqual(["dispute"]);
+  });
+
+  it("when the store refuses mid-loop, results gathered so far are used", async () => {
+    const h = harness(1, [callStep("get_dispute", { dispute_id: "PP-D-77" }), textStep]);
+    const getDispute = vi.fn();
+    const items = await gatherWithToolkit("PP-D-77", { runAgent: h.agent, getDispute });
+    expect(h.model.doGenerateCalls).toHaveLength(1);
+    expect(getDispute).not.toHaveBeenCalled();
+    expect(items.map((i) => i.kind)).toEqual(["dispute"]);
   });
 });

@@ -118,25 +118,127 @@ function trackingItem(t: Rec, orderId: string | undefined): EvidenceItem | null 
   };
 }
 
-function itemsFromCalls(calls: ToolCall[], orderId?: string): EvidenceItem[] {
+/** Keeps only results about the requested dispute/order and a transaction tied to them; dedupes by id. */
+function itemsFromCalls(calls: ToolCall[], ctx: GatherContext): EvidenceItem[] {
+  const parsed = calls.map((c) => ({ tool: c.tool, r: rec(parse(c.result)) }));
   const out: EvidenceItem[] = [];
-  for (const c of calls) {
-    const r = rec(parse(c.result));
-    if (c.tool === "get_dispute") out.push(...(disputeItem(r) ? [disputeItem(r)!] : []));
-    else if (c.tool === "get_order") out.push(...orderItems(r));
-    else {
-      const t = trackingItem(r, orderId);
-      if (t) out.push(t);
+  const txns = new Set<string>();
+
+  for (const { tool: t, r } of parsed) {
+    if (t !== "get_dispute" || r.dispute_id !== ctx.disputeId) continue;
+    const it = disputeItem(r);
+    if (it) out.push(it);
+    for (const x of Array.isArray(r.disputed_transactions) ? r.disputed_transactions : []) {
+      const id = str(rec(x).seller_transaction_id);
+      if (id) txns.add(id);
     }
+  }
+  for (const { tool: t, r } of parsed) {
+    if (t !== "get_order" || !ctx.orderId || r.id !== ctx.orderId) continue;
+    const items = orderItems(r);
+    out.push(...items);
+    for (const i of items) if (i.kind === "capture") txns.add(String(rec(i.data).id));
+  }
+  for (const { tool: t, r } of parsed) {
+    if (t !== "get_shipment_tracking") continue;
+    const first = rec(Array.isArray(r.trackers) ? r.trackers[0] : r);
+    const txn = str(first.transaction_id);
+    if (!txn || !txns.has(txn)) continue;
+    const it = trackingItem(r, ctx.orderId);
+    if (it) out.push(it);
   }
   const seen = new Set<string>();
   return out.filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
 }
 
-/** Default agent: Gemini + the Toolkit's read-only PayPal tools. Counts one call against the daily AI cap. */
-export const runToolkitAgent: RunAgent = async ({ disputeId, orderId }) => {
-  if (!(await tryConsumeAiCall())) return { ok: false };
-  try {
+const pick = (o: Rec, keys: string[]): Rec => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+const scrub = (v: unknown): unknown =>
+  JSON.parse(JSON.stringify(v).replace(/[^\s"@\\]+@[^\s"@\\]+\.[A-Za-z]{2,}/g, "[redacted]"));
+
+/** What the model sees: ids, statuses, amounts and dates only. No emails, names or street lines. */
+export function redactForModel(name: string, result: unknown): unknown {
+  const r = rec(parse(result));
+  const amount = (a: unknown) => pick(rec(a), ["currency_code", "value"]);
+  if (name === "get_dispute") {
+    return scrub({
+      ...pick(r, ["dispute_id", "status", "reason", "create_time", "update_time", "seller_response_due_date", "dispute_life_cycle_stage"]),
+      dispute_amount: amount(r.dispute_amount),
+      disputed_transactions: (Array.isArray(r.disputed_transactions) ? r.disputed_transactions : []).map((x) => pick(rec(x), ["seller_transaction_id"])),
+    });
+  }
+  if (name === "get_order") {
+    const units = Array.isArray(r.purchase_units) ? r.purchase_units : [];
+    return scrub({
+      ...pick(r, ["id", "status", "create_time"]),
+      purchase_units: units.map((u) => ({
+        amount: amount(rec(u).amount),
+        captures: (Array.isArray(rec(rec(u).payments).captures) ? (rec(rec(u).payments).captures as unknown[]) : []).map((c) => ({
+          ...pick(rec(c), ["id", "status", "create_time"]),
+          amount: amount(rec(c).amount),
+        })),
+      })),
+    });
+  }
+  const t = (x: unknown) => pick(rec(x), ["transaction_id", "tracking_number", "carrier", "status", "last_updated_time", "create_time"]);
+  return scrub(Array.isArray(r.trackers) ? { trackers: r.trackers.map(t) } : t(r));
+}
+
+type LegacyTool = { description?: string; parameters: unknown; execute: (a: unknown) => Promise<unknown> };
+export const MAX_AGENT_STEPS = 4;
+class CapReached extends Error {}
+
+/**
+ * Gemini + the Toolkit's read-only tools. Every model step consumes one slot of the daily AI cap; when the cap
+ * refuses, the loop stops and whatever was gathered so far is used.
+ */
+export function createToolkitAgent(deps: {
+  consume: () => Promise<boolean>;
+  loadTools: () => Promise<Record<string, LegacyTool>>;
+  loadModel: () => Promise<unknown>;
+}): RunAgent {
+  return async ({ disputeId, orderId }) => {
+    const calls: ToolCall[] = [];
+    try {
+      const tools: Record<string, unknown> = {};
+      for (const [name, t] of Object.entries(await deps.loadTools())) {
+        if (!(READ_ONLY_TOOLS as readonly string[]).includes(name)) continue; // read-only only
+        tools[name] = tool({
+          description: t.description,
+          inputSchema: t.parameters as never,
+          execute: async (args: unknown) => {
+            try {
+              const result = await t.execute(args);
+              calls.push({ tool: name as ToolName, result }); // full result, for evidence
+              return redactForModel(name, result) as never; // redacted view, for the model
+            } catch (e) {
+              return { error: e instanceof Error ? e.message : "tool failed" } as never;
+            }
+          },
+        } as never);
+      }
+      await generateText({
+        model: await deps.loadModel(),
+        tools,
+        stopWhen: stepCountIs(MAX_AGENT_STEPS),
+        prepareStep: async () => {
+          if (!(await deps.consume())) throw new CapReached();
+          return undefined;
+        },
+        system: "You gather PayPal-side facts for a dispute. Call the tools; do not summarise. Never invent ids.",
+        prompt: `Call get_dispute for dispute ${disputeId}.${orderId ? ` Then call get_order for order ${orderId}, and get_shipment_tracking with order_id ${orderId} and the seller transaction id from the dispute.` : ""}`,
+      } as never);
+      return { ok: true, calls };
+    } catch {
+      return calls.length > 0 ? { ok: true, calls } : { ok: false };
+    }
+  };
+}
+
+/** Default agent wiring: real Toolkit (sandbox, read-only), real Gemini model, DB-backed AI cap. */
+export const runToolkitAgent: RunAgent = createToolkitAgent({
+  consume: tryConsumeAiCall,
+  loadModel: getGeminiModel,
+  loadTools: async () => {
     const { PayPalAgentToolkit } = await import("@paypal/agent-toolkit/ai-sdk");
     const cfg = getPaypalConfig();
     const toolkit = new PayPalAgentToolkit({
@@ -144,37 +246,9 @@ export const runToolkitAgent: RunAgent = async ({ disputeId, orderId }) => {
       clientSecret: cfg.clientSecret,
       configuration: { actions: { disputes: { get: true }, orders: { get: true }, shipment: { get: true } }, context: { sandbox: true } },
     });
-    const calls: ToolCall[] = [];
-    const tools: Record<string, unknown> = {};
-    for (const [name, t] of Object.entries(toolkit.getTools())) {
-      if (!(READ_ONLY_TOOLS as readonly string[]).includes(name)) continue; // belt and braces: read-only only
-      const legacy = t as unknown as { description?: string; parameters: unknown; execute: (a: unknown) => Promise<unknown> };
-      tools[name] = tool({
-        description: legacy.description,
-        inputSchema: legacy.parameters as never,
-        execute: async (args: unknown) => {
-          try {
-            const result = await legacy.execute(args);
-            calls.push({ tool: name as ToolName, result });
-            return result as never;
-          } catch (e) {
-            return { error: e instanceof Error ? e.message : "tool failed" } as never;
-          }
-        },
-      } as never);
-    }
-    await generateText({
-      model: await getGeminiModel(),
-      tools,
-      stopWhen: stepCountIs(6),
-      system: "You gather PayPal-side facts for a dispute. Call the tools; do not summarise. Never invent ids.",
-      prompt: `Call get_dispute for dispute ${disputeId}.${orderId ? ` Then call get_order for order ${orderId}, and get_shipment_tracking with order_id ${orderId} and the seller transaction id from the dispute.` : ""}`,
-    } as never);
-    return { ok: true, calls };
-  } catch {
-    return { ok: false };
-  }
-};
+    return toolkit.getTools() as unknown as Record<string, LegacyTool>;
+  },
+});
 
 /** PayPal-side facts as evidence items. AI + Toolkit when available; direct REST when AI is capped or fails. */
 export async function gatherWithToolkit(disputeId: string, deps: GatherDeps = {}): Promise<EvidenceItem[]> {
@@ -186,7 +260,7 @@ export async function gatherWithToolkit(disputeId: string, deps: GatherDeps = {}
     // fall through to REST
   }
   if (ran.ok) {
-    const items = itemsFromCalls(ran.calls, deps.orderId);
+    const items = itemsFromCalls(ran.calls, { disputeId, orderId: deps.orderId });
     if (items.length > 0) return items;
   }
 
@@ -203,5 +277,5 @@ export async function gatherWithToolkit(disputeId: string, deps: GatherDeps = {}
       // order unreachable
     }
   }
-  return itemsFromCalls(calls, deps.orderId);
+  return itemsFromCalls(calls, { disputeId, orderId: deps.orderId });
 }

@@ -20,6 +20,12 @@ export function sanitize(s: string): string {
   return out.replace(/[^\x20-\x7E\xA1-\xFF]/g, "");
 }
 
+/** One timeline/argument row with its citations; rows that cite a simulated item carry a [SIMULATED] marker. */
+export function formatRow(text: string, ids: string[], byId: Map<string, EvidenceItem>, at?: string): string {
+  const sim = ids.some((id) => byId.get(id)?.simulated);
+  return `${at ? at.slice(0, 10) + "  " : ""}${text}  [${ids.join(", ")}]${sim ? " [SIMULATED]" : ""}`;
+}
+
 const W = 612, H = 792, M = 54, LH = 14;
 
 export async function renderEvidencePdf(input: {
@@ -95,7 +101,7 @@ export async function renderEvidencePdf(input: {
   write("Timeline", { f: bold, size: 16 });
   gap(6);
   for (const e of draft.timeline) {
-    write(`${e.at ? e.at.slice(0, 10) + "  " : ""}${e.text}  [${e.evidenceIds.join(", ")}]`);
+    write(formatRow(e.text, e.evidenceIds, byId, e.at));
     gap(4);
   }
   if (draft.argument.length) {
@@ -103,7 +109,7 @@ export async function renderEvidencePdf(input: {
     write("Why this answers the claim", { f: bold, size: 14 });
     gap(4);
     for (const a of draft.argument) {
-      write(`${a.text}  [${a.evidenceIds.join(", ")}]`);
+      write(formatRow(a.text, a.evidenceIds, byId));
       gap(4);
     }
   }

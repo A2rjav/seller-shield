@@ -18,41 +18,88 @@ export const caseDraftSchema: z.ZodType<CaseDraft> = z.object({
 
 // ---- Claim extraction ----
 
+const MONTH_NAMES = "(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)";
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const pad = (n: number | string) => String(n).padStart(2, "0");
-
-type Claims = { money: Set<number>; dates: Set<string>; tokens: Set<string> };
-
-const MONEY_RE = /\$\s?\d[\d,]*(?:\.\d{2})?/g;
-const ISO_RE = /\d{4}-\d{2}-\d{2}/g;
-const US_RE = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g;
-const NAMED_RE = /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/gi;
-const TOKEN_RE = /\b[A-Z0-9]{10,}\b/g;
-
-const toCents = (s: string) => Math.round(parseFloat(s.replace(/[$,\s]/g, "")) * 100);
+const monthNo = (name: string) => MONTHS.indexOf(name.slice(0, 3).toLowerCase()) + 1;
 const fullYear = (y: string) => (y.length === 2 ? `20${y}` : y);
+const validMD = (m: number, d: number) => m >= 1 && m <= 12 && d >= 1 && d <= 31;
+
+const NUM = String.raw`\d[\d,]*(?:\.\d{1,2})?`;
+const MONEY_RES = [
+  new RegExp(String.raw`\$\s?(${NUM})`, "g"),
+  new RegExp(String.raw`(?<![\d.,])(${NUM})\s*(?:USD|dollars?)\b`, "gi"),
+  new RegExp(String.raw`\bUSD\s?(${NUM})`, "g"),
+];
+const toCents = (s: string) => Math.round(parseFloat(s.replace(/,/g, "")) * 100);
+
+const FULL_RES: { re: RegExp; iso: (m: RegExpMatchArray) => string }[] = [
+  { re: /\b(\d{4})-(\d{2})-(\d{2})/g, iso: (m) => `${m[1]}-${m[2]}-${m[3]}` },
+  { re: /\b(\d{4})\/(\d{1,2})\/(\d{1,2})\b/g, iso: (m) => `${m[1]}-${pad(m[2])}-${pad(m[3])}` },
+  { re: /(?<![\d/])(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, iso: (m) => `${fullYear(m[3])}-${pad(m[1])}-${pad(m[2])}` },
+  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b`, "g"), iso: (m) => `${m[3]}-${pad(monthNo(m[1]))}-${pad(m[2])}` },
+  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\.?,?\s+(\d{4})\b`, "g"), iso: (m) => `${m[3]}-${pad(monthNo(m[2]))}-${pad(m[1])}` },
+];
+// Year-less forms are compared on month-day only.
+const MD_RES: { re: RegExp; md: (m: RegExpMatchArray) => [number, number] }[] = [
+  { re: new RegExp(String.raw`\b${MONTH_NAMES}[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b`, "g"), md: (m) => [monthNo(m[1]), Number(m[2])] },
+  { re: new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?${MONTH_NAMES}[a-z]*\b`, "g"), md: (m) => [monthNo(m[2]), Number(m[1])] },
+  { re: /(?<![\d/.:-])(\d{1,2})\/(\d{1,2})(?![\d/])/g, md: (m) => [Number(m[1]), Number(m[2])] },
+];
+const TOKEN_RE = /\b[A-Za-z0-9]{10,}\b/g;
+
+/** Joins digit groups separated by single spaces or dashes ("9400 1118 9922") so they match as one number. */
+const collapse = (t: string) => t.replace(/\b\d{4,}(?:[ -]\d{4,})+\b/g, (g) => g.replace(/[ -]/g, ""));
+
+type Claims = { money: Set<number>; dates: Set<string>; md: Set<string>; tokens: Set<string> };
 
 function extract(text: string): Claims {
   const money = new Set<number>();
   const dates = new Set<string>();
+  const md = new Set<string>();
   const tokens = new Set<string>();
-  for (const m of text.match(MONEY_RE) ?? []) money.add(toCents(m));
-  for (const m of text.match(ISO_RE) ?? []) dates.add(m);
-  for (const m of text.matchAll(US_RE)) dates.add(`${fullYear(m[3])}-${pad(m[1])}-${pad(m[2])}`);
-  for (const m of text.matchAll(NAMED_RE)) {
-    dates.add(`${m[3]}-${pad(MONTHS.indexOf(m[1].toLowerCase()) + 1)}-${pad(m[2])}`);
+  for (const re of MONEY_RES) for (const m of text.matchAll(re)) money.add(toCents(m[1]));
+  let rest = text;
+  for (const { re, iso } of FULL_RES) {
+    for (const m of text.matchAll(re)) dates.add(iso(m));
+    rest = rest.replace(re, " ");
   }
-  for (const m of text.match(TOKEN_RE) ?? []) if (/\d/.test(m)) tokens.add(m);
-  return { money, dates, tokens };
+  for (const { re, md: f } of MD_RES) {
+    for (const m of rest.matchAll(re)) {
+      const [mo, d] = f(m);
+      if (validMD(mo, d)) md.add(`${pad(mo)}-${pad(d)}`);
+    }
+  }
+  for (const m of collapse(text).match(TOKEN_RE) ?? []) if (/\d/.test(m)) tokens.add(m.toLowerCase());
+  return { money, dates, md, tokens };
 }
 
-/** What a cited item "contains": its title, summary and JSON data, with money also read from bare decimals/cents. */
-function haystack(items: EvidenceItem[]): { text: string; claims: Claims } {
+const DECIMAL = /^\d+(?:\.\d{1,2})?$/;
+
+/** Amounts a data object states, found structurally: *Cents keys as cents, amount-like keys as decimal dollars. */
+function walkAmounts(v: unknown, out: Set<number>, key = "", depth = 0): void {
+  if (depth > 8 || v === null || v === undefined) return;
+  if (Array.isArray(v)) return v.forEach((x) => walkAmounts(x, out, key, depth + 1));
+  if (typeof v === "object") {
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) walkAmounts(x, out, k, depth + 1);
+    return;
+  }
+  if (/cents$/i.test(key) && typeof v === "number" && Number.isFinite(v)) out.add(Math.round(v));
+  else if (/amount$|^value$/i.test(key) && (typeof v === "string" || typeof v === "number") && DECIMAL.test(String(v))) {
+    out.add(toCents(String(v)));
+  }
+}
+
+/** What cited items contain. Amounts come from "$x.yy"/"x.yy USD" in text and from structured data keys, never from digit runs. */
+function haystack(items: EvidenceItem[]) {
   const text = items.map((i) => `${i.title}\n${i.summary}\n${JSON.stringify(i.data) ?? ""}`).join("\n");
+  const prose = items.map((i) => `${i.title}\n${i.summary}`).join("\n");
   const claims = extract(text);
-  for (const m of text.matchAll(/(?<![\d.])(\d[\d,]*)\.(\d{2})(?!\d)/g)) claims.money.add(toCents(`${m[1]}.${m[2]}`));
-  for (const m of text.matchAll(/(?<![\d.$])(\d{3,9})(?![\d.])/g)) claims.money.add(Number(m[1])); // integer cents in data
-  return { text, claims };
+  claims.money = extract(prose).money;
+  for (const i of items) walkAmounts(i.data, claims.money);
+  for (const i of items) if (i.at) claims.dates.add(i.at.slice(0, 10));
+  for (const d of claims.dates) claims.md.add(d.slice(5));
+  return { text: collapse(text).toLowerCase(), claims };
 }
 
 function checkText(label: string, text: string, items: EvidenceItem[]): string[] {
@@ -61,8 +108,18 @@ function checkText(label: string, text: string, items: EvidenceItem[]): string[]
   const problems: string[] = [];
   for (const c of want.money) if (!have.money.has(c)) problems.push(`${label}: amount $${(c / 100).toFixed(2)} is not in the cited evidence`);
   for (const d of want.dates) if (!have.dates.has(d)) problems.push(`${label}: date ${d} is not in the cited evidence`);
+  for (const d of want.md) if (!have.md.has(d)) problems.push(`${label}: date ${d} (month-day) is not in the cited evidence`);
   for (const t of want.tokens) if (!hay.includes(t)) problems.push(`${label}: identifier ${t} is not in the cited evidence`);
   return problems;
+}
+
+/** `at` must be empty or a date matching the date of one of the entry's cited items. */
+function checkAt(label: string, at: string, items: EvidenceItem[]): string[] {
+  if (!at.trim()) return [];
+  const dates = extract(at).dates;
+  if (dates.size === 0) return [`${label}: "at" must be empty or a date`];
+  const allowed = new Set(items.flatMap((i) => (i.at ? [i.at.slice(0, 10)] : [])));
+  return [...dates].filter((d) => !allowed.has(d)).map((d) => `${label}: "at" date ${d} does not match any cited item`);
 }
 
 /** Rejects any entry without existing evidence ids and any money, date or tracking-like token the cited items do not contain. */
@@ -71,8 +128,8 @@ export function validateClaims(draft: CaseDraft, folder: EvidenceItem[]): { ok: 
   const problems: string[] = [];
 
   const entries = [
-    ...draft.timeline.map((e, i) => ({ label: `timeline[${i}]`, text: e.text, ids: e.evidenceIds })),
-    ...draft.argument.map((e, i) => ({ label: `argument[${i}]`, text: e.text, ids: e.evidenceIds })),
+    ...draft.timeline.map((e, i) => ({ label: `timeline[${i}]`, text: e.text, ids: e.evidenceIds, at: e.at as string | null })),
+    ...draft.argument.map((e, i) => ({ label: `argument[${i}]`, text: e.text, ids: e.evidenceIds, at: null as string | null })),
   ];
   for (const e of entries) {
     if (e.ids.length === 0) problems.push(`${e.label}: cites no evidence`);
@@ -83,6 +140,7 @@ export function validateClaims(draft: CaseDraft, folder: EvidenceItem[]): { ok: 
       else problems.push(`${e.label}: unknown evidence id ${id}`);
     }
     problems.push(...checkText(e.label, e.text, known));
+    if (e.at !== null) problems.push(...checkAt(e.label, e.at, known));
   }
   problems.push(...checkText("summary", draft.summary, folder));
   problems.push(...checkText("sellerNote", draft.sellerNote, folder));
@@ -129,11 +187,14 @@ Rules:
 - Plain, factual, polite tone. No legal claims. summary and sellerNote are short and may cite nothing, but must not contain amounts, dates or identifiers.
 Return JSON: { summary, timeline: [{ at, text, evidenceIds }], argument: [{ text, evidenceIds }], sellerNote }.`;
 
+/** Buyer contact details never go to the model. */
+const redactEmails = (t: string) => t.replace(/[^\s@<>"',;|]+@[^\s@<>"',;|]+\.[A-Za-z]{2,}/g, "[buyer email]");
+
 function buildPrompt(input: WriteInput): string {
   const have = new Set(input.folder.map((i) => i.kind));
   const present = input.requirements.needed.filter((k) => have.has(k));
   const missing = input.requirements.needed.filter((k) => !have.has(k));
-  const rows = ordered(input.folder).map((i) => `${i.id} | ${i.kind} | ${i.at ?? "undated"} | ${i.summary} | ${i.simulated}`);
+  const rows = ordered(input.folder).map((i) => redactEmails(`${i.id} | ${i.kind} | ${i.at ?? "undated"} | ${i.summary} | ${i.simulated}`));
   return [
     `Dispute reason: ${input.requirements.plain}`,
     `Evidence coverage: have [${present.join(", ")}]; missing [${missing.join(", ")}].`,
