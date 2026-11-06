@@ -21,7 +21,11 @@ export type EvidenceItem = {
 type Addr = { line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; countryCode?: string };
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
-const day = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString().slice(0, 10) : null);
+const day = (d: Date | string | null | undefined) => {
+  if (!d) return null;
+  const t = new Date(d);
+  return Number.isNaN(t.getTime()) ? null : t.toISOString().slice(0, 10);
+};
 
 function money(cents: number, currency: string): string {
   const v = (cents / 100).toFixed(2);
@@ -130,43 +134,83 @@ async function addOrderItems(db: Db, orderId: string, items: EvidenceItem[]) {
   const [mandate] = await db.select().from(mandates).where(
     o.mandateId ? or(eq(mandates.id, o.mandateId), eq(mandates.orderId, o.id)) : eq(mandates.orderId, o.id),
   );
-  if (mandate) {
-    const p = mandate.payload as {
-      mandateId: string; shopperEmail: string; agentId: string; items: { sku: string; qty: number }[];
-      maxAmountCents: number; currency: string; createdAt: string; expiresAt: string;
-    };
-    const failures = Array.isArray(mandate.failures) ? (mandate.failures as string[]) : [];
-    const verified = mandate.verified
-      ? "verified: true"
-      : `verified: false (failures: ${failures.length ? failures.join(", ") : "none recorded"})`;
-    items.push({
-      id: `ev:mandate:${mandate.id}`, kind: "mandate", title: "Purchase mandate", at: p.createdAt, source: "mandate", simulated: false,
-      summary: `Mandate ${p.mandateId} for ${p.shopperEmail}: max ${money(p.maxAmountCents, p.currency)}, items ${p.items.map((i) => `${i.qty} x ${i.sku}`).join(", ")}, created ${day(p.createdAt)}, expires ${day(p.expiresAt)}; ${verified}; hash ${mandate.hash}`,
-      data: { payload: p, hash: mandate.hash, verified: mandate.verified, failures },
-    });
+  if (mandate) addMandateItems(mandate, o, items);
+}
 
-    const match = mandate.payerEmailMatch;
-    const matchText =
-      match === true ? "PayPal payer email matched the mandate shopper email"
-      : match === false ? "PayPal payer email did not match the mandate shopper email"
-      : "PayPal payer email match was not recorded";
-    items.push({
-      id: `ev:payer_approval:${o.id}`, kind: "payer_approval", title: "PayPal payer approval",
-      at: iso(o.approvedAt), source: "paypal", simulated: false,
-      summary: o.approvedAt
-        ? `Payer approved the PayPal order on ${day(o.approvedAt)}; ${matchText}`
-        : `No payer approval time recorded; ${matchText}`,
-      data: { approvedAt: iso(o.approvedAt), payerId: o.payerId, payerEmailMatch: match },
-    });
+type ReadMandate = {
+  mandateId: string; shopperEmail: string; agentId: string; items: { sku: string; qty: number }[];
+  maxAmountCents: number; currency: string; createdAt: string; expiresAt: string;
+};
 
-    const agentSigOk = !failures.includes("bad_agent_signature") && !failures.includes("agent_not_named");
-    items.push({
-      id: `ev:agent_identity:${mandate.id}`, kind: "agent_identity", title: "Agent identity", at: p.createdAt,
-      source: "mandate", simulated: false,
-      summary: `Order placed by agent ${p.agentId}; agent request signature verified: ${agentSigOk ? "true" : "false"}`,
-      data: { agentId: p.agentId, agentSignatureVerified: agentSigOk },
-    });
+const isStr = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+const validDate = (v: unknown): v is string => isStr(v) && !Number.isNaN(new Date(v).getTime());
+
+/** Returns the payload only if every field the summary uses is present and well-typed. */
+function readPayload(raw: unknown): ReadMandate | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  if (!isStr(p.mandateId) || !isStr(p.shopperEmail) || !isStr(p.agentId) || !isStr(p.currency)) return null;
+  if (typeof p.maxAmountCents !== "number" || !Number.isFinite(p.maxAmountCents)) return null;
+  if (!validDate(p.createdAt) || !validDate(p.expiresAt)) return null;
+  if (!Array.isArray(p.items)) return null;
+  for (const i of p.items) {
+    if (!i || typeof i !== "object" || !isStr((i as { sku?: unknown }).sku) || typeof (i as { qty?: unknown }).qty !== "number") return null;
   }
+  return p as unknown as ReadMandate;
+}
+
+function addMandateItems(
+  mandate: typeof mandates.$inferSelect,
+  o: typeof orders.$inferSelect,
+  items: EvidenceItem[],
+) {
+  const p = readPayload(mandate.payload);
+  const failures = Array.isArray(mandate.failures) ? (mandate.failures as string[]) : [];
+  const verifiedText = mandate.verified
+    ? "verified: true"
+    : `verified: false (failures: ${failures.length ? failures.join(", ") : "none recorded"})`;
+  const rawId = (mandate.payload as { mandateId?: unknown } | null)?.mandateId;
+  const label = isStr(rawId) ? rawId : "unknown";
+
+  items.push({
+    id: `ev:mandate:${mandate.id}`, kind: "mandate", title: "Purchase mandate",
+    at: p ? p.createdAt : null, source: "mandate", simulated: false,
+    summary: p
+      ? `Mandate ${p.mandateId} for ${p.shopperEmail}: max ${money(p.maxAmountCents, p.currency)}, items ${p.items.map((i) => `${i.qty} x ${i.sku}`).join(", ")}, created ${day(p.createdAt)}, expires ${day(p.expiresAt)}; ${verifiedText}; hash ${mandate.hash}`
+      : `Mandate ${label}: payload unreadable — not verified`,
+    data: { payload: mandate.payload, hash: mandate.hash, verified: mandate.verified, failures },
+  });
+
+  const match = mandate.payerEmailMatch;
+  const matchText =
+    match === true ? "PayPal payer email matched the mandate shopper email"
+    : match === false ? "PayPal payer email did not match the mandate shopper email"
+    : "PayPal payer email match was not recorded";
+  items.push({
+    id: `ev:payer_approval:${o.id}`, kind: "payer_approval", title: "PayPal payer approval",
+    at: iso(o.approvedAt), source: "paypal", simulated: false,
+    summary: o.approvedAt
+      ? `Payer approved the PayPal order on ${day(o.approvedAt)}; ${matchText}`
+      : `No payer approval time recorded; ${matchText}`,
+    data: { approvedAt: iso(o.approvedAt), payerId: o.payerId, payerEmailMatch: match },
+  });
+
+  // Tri-state: verifyMandate exits early (before checking the agent signature) on a bad shopper
+  // signature or malformed mandate, so absence of the agent codes does not mean the agent was checked.
+  const agentFailed = failures.includes("bad_agent_signature") || failures.includes("agent_not_named");
+  const earlyExit = failures.includes("bad_shopper_signature") || failures.includes("malformed_mandate");
+  const agentSig: "verified" | "failed" | "not checked" =
+    agentFailed ? "failed"
+    : mandate.verified || (failures.length > 0 && !earlyExit) ? "verified"
+    : "not checked";
+  const rawAgent = (mandate.payload as { agentId?: unknown } | null)?.agentId;
+  const agentId = isStr(rawAgent) ? rawAgent : null;
+  items.push({
+    id: `ev:agent_identity:${mandate.id}`, kind: "agent_identity", title: "Agent identity", at: p ? p.createdAt : null,
+    source: "mandate", simulated: false,
+    summary: `Order placed by agent ${agentId ?? "unknown"}; agent request signature ${agentSig === "not checked" ? "not checked" : `verified: ${agentSig === "verified"}`}`,
+    data: { agentId, agentSignature: agentSig },
+  });
 }
 
 async function addDisputeItems(db: Db, disputeId: string, items: EvidenceItem[]) {

@@ -108,3 +108,51 @@ describe("buildEvidenceFolder", () => {
     expect([...real].sort()).toEqual(real);
   });
 });
+
+describe("unverifiable mandates", () => {
+  async function seedBadMandate(orderId: string, payload: unknown, failures: string[]) {
+    await seedOrder(orderId, "agent");
+    await db.insert(mandates).values({
+      id: `m-${orderId}`, orderId, shopperJws: "a", agentJws: "b", hash: "h", verified: false, failures, payerEmailMatch: null, payload,
+    });
+  }
+
+  it.each([["empty object", {}], ["missing items and maxAmountCents", { mandateId: "m-x", shopperEmail: "b@example.com", agentId: "agent-7" }], ["string", "garbage"]])(
+    "early-exit failure with degenerate payload (%s) builds without throwing or $NaN",
+    async (_n, payload) => {
+      await seedBadMandate("B1", payload, ["bad_shopper_signature"]);
+      const f = await buildEvidenceFolder(db, { orderId: "B1" });
+      const m = f.find((i) => i.kind === "mandate")!;
+      expect(m.summary).toContain("payload unreadable");
+      expect(m.summary).toContain("not verified");
+      expect(m.summary).not.toContain("verified: true");
+      expect(f.find((i) => i.kind === "agent_identity")!.summary).toContain("not checked");
+      expect(f.every((i) => !i.summary.includes("NaN"))).toBe(true);
+    },
+  );
+
+  it("early-exit failure with a readable payload says agent signature not checked", async () => {
+    await seedBadMandate("B2", {
+      mandateId: "m-B2", shopperEmail: "b@example.com", agentId: "agent-7", merchantId: "juniper-and-thread",
+      items: [{ sku: "ring-1", qty: 1 }], maxAmountCents: 7000, currency: "USD",
+      createdAt: "2026-11-05T09:00:00.000Z", expiresAt: "2026-11-06T09:00:00.000Z", shopperPublicJwk: {},
+    }, ["bad_shopper_signature"]);
+    const f = await buildEvidenceFolder(db, { orderId: "B2" });
+    expect(f.find((i) => i.kind === "mandate")!.summary).toContain("verified: false");
+    expect(f.find((i) => i.kind === "agent_identity")!.summary).toContain("not checked");
+  });
+
+  it("agent codes mean failed; a later-stage failure means the agent signature was verified", async () => {
+    const good = {
+      mandateId: "m-x", shopperEmail: "b@example.com", agentId: "agent-7", merchantId: "juniper-and-thread",
+      items: [{ sku: "ring-1", qty: 1 }], maxAmountCents: 7000, currency: "USD",
+      createdAt: "2026-11-05T09:00:00.000Z", expiresAt: "2026-11-06T09:00:00.000Z", shopperPublicJwk: {},
+    };
+    await seedBadMandate("B3", good, ["bad_agent_signature"]);
+    await seedBadMandate("B4", good, ["expired"]);
+    const s3 = (await buildEvidenceFolder(db, { orderId: "B3" })).find((i) => i.kind === "agent_identity")!.summary;
+    const s4 = (await buildEvidenceFolder(db, { orderId: "B4" })).find((i) => i.kind === "agent_identity")!.summary;
+    expect(s3).toContain("verified: false");
+    expect(s4).toContain("verified: true");
+  });
+});
