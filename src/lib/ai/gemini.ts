@@ -65,27 +65,47 @@ function isRateLimited(err: unknown): boolean {
   return /\b429\b|rate.?limit|RESOURCE_EXHAUSTED|too many requests/i.test(String(e.message ?? ""));
 }
 
+/** Gemini's transient "model is overloaded" answer (HTTP 503 / UNAVAILABLE / "high demand"), common on the free tier. */
+export function isOverloaded(err: unknown): boolean {
+  const e = err as { statusCode?: number; status?: number; message?: string; lastError?: unknown } | null;
+  if (!e || typeof e !== "object") return false;
+  if (e.statusCode === 503 || e.status === 503) return true;
+  if (e.lastError && isOverloaded(e.lastError)) return true;
+  return /\b503\b|UNAVAILABLE|overloaded|high demand/i.test(String(e.message ?? ""));
+}
+
 /** The model answered, but not with an object of the required shape: the caller may retry with feedback. */
 function isInvalidOutput(err: unknown): boolean {
   return NoObjectGeneratedError.isInstance(err) || TypeValidationError.isInstance(err) || JSONParseError.isInstance(err);
 }
 
-export function createAi(deps: { generate: Generate; usageStore: UsageStore; limit: number }) {
-  async function askJson<T>(opts: AskOpts<T>): Promise<AskResult<T>> {
-    let allowed: boolean;
-    try {
-      allowed = await deps.usageStore.tryIncrement();
-    } catch {
-      return { ok: false, reason: "error" };
-    }
-    if (!allowed) return { ok: false, reason: "cap" };
+/** Wait before the single retry of an overloaded call. */
+export const OVERLOAD_RETRY_MS = 2000;
 
+export function createAi(deps: { generate: Generate; usageStore: UsageStore; limit: number; sleep?: (ms: number) => Promise<void> }) {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  async function askJson<T>(opts: AskOpts<T>): Promise<AskResult<T>> {
     let raw: unknown;
-    try {
-      raw = await deps.generate({ ...opts, tier: opts.tier ?? "fast" });
-    } catch (err) {
-      if (isInvalidOutput(err)) return { ok: false, reason: "invalid" };
-      return isRateLimited(err) ? { ok: false, reason: "error", rateLimited: true } : { ok: false, reason: "error" };
+    // An overloaded model (503) gets one more try. Each try is a real model call, so each one takes a slot of the daily cap.
+    for (let attempt = 0; ; attempt++) {
+      let allowed: boolean;
+      try {
+        allowed = await deps.usageStore.tryIncrement();
+      } catch {
+        return { ok: false, reason: "error" };
+      }
+      if (!allowed) return attempt === 0 ? { ok: false, reason: "cap" } : { ok: false, reason: "error" };
+      try {
+        raw = await deps.generate({ ...opts, tier: opts.tier ?? "fast" });
+        break;
+      } catch (err) {
+        if (isInvalidOutput(err)) return { ok: false, reason: "invalid" };
+        if (attempt === 0 && isOverloaded(err)) {
+          await sleep(OVERLOAD_RETRY_MS);
+          continue;
+        }
+        return isRateLimited(err) ? { ok: false, reason: "error", rateLimited: true } : { ok: false, reason: "error" };
+      }
     }
     try {
       const value = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -135,16 +155,18 @@ export function pickModel(models: ModelInfo[], tier: ModelTier = "quality"): str
 
 /**
  * Per-call settings. maxRetries 0: the daily cap counts real model calls, so the SDK must not retry behind it.
- * Pro models think by default; a low setting keeps a case build quick (Gemini 3+ takes a level, 2.x a token budget).
+ * Thinking tokens count against maxOutputTokens: Gemini 3+ models (flash too) think by default and, live on
+ * gemini-3.5-flash, spent ~980 of a 1024-token budget thinking and truncated the JSON. So every Gemini 3+ model
+ * runs at the "low" thinking level; 2.x pro takes a token budget; 2.x flash is left as is.
  */
 export function generationOptions(modelId: string): {
   maxRetries: 0;
   providerOptions?: { google: { thinkingConfig: { thinkingLevel: "low" } | { thinkingBudget: number } } };
 } {
-  if (!isPro(modelId)) return { maxRetries: 0 };
   const major = version(modelId)[0] ?? 0;
-  const thinkingConfig = major >= 3 ? { thinkingLevel: "low" as const } : { thinkingBudget: 1024 };
-  return { maxRetries: 0, providerOptions: { google: { thinkingConfig } } };
+  if (major >= 3) return { maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } } };
+  if (isPro(modelId)) return { maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingBudget: 1024 } } } };
+  return { maxRetries: 0 };
 }
 
 type ModelCache = { models?: ModelInfo[] };

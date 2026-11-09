@@ -67,6 +67,47 @@ describe("createAi", () => {
     expect(await ai.askJson(opts)).toEqual({ ok: false, reason: "error", rateLimited: true });
   });
 
+  it("retries an overloaded (503) model once, counting both calls against the cap", async () => {
+    const st = store(0);
+    const sleep = vi.fn(async () => {});
+    let n = 0;
+    const ai = createAi({
+      generate: async () => {
+        if (n++ === 0) throw Object.assign(new Error("This model is currently experiencing high demand."), { statusCode: 503 });
+        return { summary: "ok" };
+      },
+      usageStore: st,
+      limit: 300,
+      sleep,
+    });
+    expect(await ai.askJson(opts)).toEqual({ ok: true, data: { summary: "ok" } });
+    expect(st.calls).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after one overload retry, and never retries past the cap", async () => {
+    const overloaded = async () => {
+      throw Object.assign(new Error("UNAVAILABLE: high demand"), { statusCode: 503 });
+    };
+    const a = createAi({ generate: overloaded, usageStore: store(0), limit: 300, sleep: async () => {} });
+    expect(await a.askJson(opts)).toEqual({ ok: false, reason: "error" });
+    const gen = vi.fn(overloaded);
+    const capped = store(299, 300);
+    const b = createAi({ generate: gen, usageStore: capped, limit: 300, sleep: async () => {} });
+    expect(await b.askJson(opts)).toEqual({ ok: false, reason: "error" });
+    expect(gen).toHaveBeenCalledTimes(1);
+    expect(capped.calls).toBe(300);
+  });
+
+  it("does not retry other errors", async () => {
+    const gen = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const ai = createAi({ generate: gen, usageStore: store(0), limit: 300, sleep: async () => {} });
+    await ai.askJson(opts);
+    expect(gen).toHaveBeenCalledTimes(1);
+  });
+
   it("maps the AI SDK's NoObjectGeneratedError to invalid, so the caller's retry path runs (I3)", async () => {
     const err = new NoObjectGeneratedError({
       message: "No object generated: could not parse the response.",
@@ -172,8 +213,11 @@ describe("model resolution", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it("generationOptions: never retries; a low thinking setting only for pro models (I3)", () => {
-    expect(generationOptions("gemini-3.1-flash")).toEqual({ maxRetries: 0 });
+  it("generationOptions: never retries; low thinking for every Gemini 3+ model (flash included) and a budget for 2.x pro", () => {
+    // Live 2026-11-09: gemini-3.5-flash spent ~980 of 1024 output tokens thinking and truncated the JSON without this.
+    expect(generationOptions("gemini-3.5-flash")).toEqual({ maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } } });
+    expect(generationOptions("gemini-3.1-flash")).toEqual({ maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } } });
+    expect(generationOptions("gemini-2.0-flash")).toEqual({ maxRetries: 0 });
     expect(generationOptions("gemini-3.1-pro")).toEqual({ maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingLevel: "low" } } } });
     expect(generationOptions("gemini-2.5-pro")).toEqual({ maxRetries: 0, providerOptions: { google: { thinkingConfig: { thinkingBudget: 1024 } } } });
   });
