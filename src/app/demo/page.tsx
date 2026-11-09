@@ -5,13 +5,13 @@ import Panel from "@/components/dashboard/Panel";
 import SimulatedTag from "@/components/dashboard/SimulatedTag";
 import { aiBudget } from "@/lib/ai/budget";
 import { listDisputeRows, listOrderRows } from "@/lib/dashboard/queries";
-import { isOpenDispute } from "@/lib/dashboard/view";
+import { disputeStatusChip, isOpenDispute } from "@/lib/dashboard/view";
 import { db } from "@/lib/db/client";
 import { orders, shipments } from "@/lib/db/schema";
 import { resetCooldownSec } from "@/lib/demo/reset";
 import { formatMoney } from "@/lib/format";
 import { eq, ne } from "drizzle-orm";
-import { DeliverButton, PollButton, ResetButton, ResolveButtons, SimulateDispute } from "./DemoActions";
+import { DeliverButton, FetchDisputeForm, PollButton, RefreshDisputeButton, ResetButton, ResolveButtons, SimulateDispute } from "./DemoActions";
 
 export const dynamic = "force-dynamic";
 
@@ -115,13 +115,20 @@ export default async function DemoPage() {
         <SimulateDispute orders={recent.map((o) => ({ id: o.id, label: orderLabel(o.id, o.buyer, o.amountCents, o.currency) }))} />
         <details className="rounded-lg border border-[#efe8da] px-3 py-2">
           <summary className="cursor-pointer text-sm font-medium text-green">Open a real PayPal sandbox dispute</summary>
+          <p className="mt-2 text-sm">Takes about five minutes in PayPal&apos;s sandbox site. Buy something in step 1 first, so there is a transaction to dispute.</p>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm">
-            <li>Go to <a className={A} href="https://www.sandbox.paypal.com" target="_blank" rel="noreferrer">sandbox.paypal.com</a> and log in as the sandbox test buyer shown in step 1.</li>
-            <li>Open Activity and click the transaction you made.</li>
-            <li>Choose Report a problem and pick a reason, for example Item not received.</li>
-            <li>Come back here and check PayPal for the new dispute (it can take a minute to appear).</li>
+            <li>Log in at <a className={A} href="https://www.sandbox.paypal.com/signin" target="_blank" rel="noreferrer">sandbox.paypal.com/signin</a> as the sandbox test buyer from step 1.</li>
+            <li>Open the <a className={A} href="https://www.sandbox.paypal.com/resolutioncenter/" target="_blank" rel="noreferrer">Resolution Center</a> (it opens &quot;Report an issue with a purchase&quot;). The shop shows as &quot;Test Store&quot; there.</li>
+            <li>Pick the transaction and click <strong>Report a Problem</strong>, then choose <strong>I haven&apos;t received the item or service</strong> (or <strong>Unauthorized activity</strong> for the &quot;my AI bought it&quot; story).</li>
+            <li>Select the item, set Item type to <strong>Physical product</strong> and Category to <strong>Jewelry</strong>.</li>
+            <li>For item not received, choose <strong>The item hasn&apos;t reached me or I refused delivery</strong>.</li>
+            <li>Enter the refund you expect (for example the order total), answer <strong>No</strong> to &quot;Have you contacted the seller?&quot;, and add a short note.</li>
+            <li>Review and <strong>Submit</strong>. PayPal shows a Case ID such as PP-R-ABC-12345678: copy it.</li>
           </ol>
-          <div className="mt-3"><PollButton /></div>
+          <p className="mt-3 text-sm">Fetched disputes can take a few minutes to appear in PayPal&apos;s list; paste the ID PayPal shows the buyer to fetch it now.</p>
+          <div className="mt-2"><FetchDisputeForm /></div>
+          <p className="mt-3 text-xs text-muted">Or check PayPal&apos;s dispute list (new disputes usually show up there after 3 to 6 minutes):</p>
+          <div className="mt-2"><PollButton /></div>
         </details>
       </Step>
 
@@ -144,9 +151,22 @@ export default async function DemoPage() {
                     {d.reasonLabel} - {formatMoney(d.amountCents, d.currency)}
                     {d.simulated ? <SimulatedTag title="A demo dispute: resolving it does not call PayPal" /> : <Badge label="PayPal sandbox" tone="blue" size="sm" />}
                   </p>
-                  <p className="break-all text-xs text-muted">{d.id}{d.simulated ? "" : ". The sandbox only settles a dispute once it is under review (after you submit evidence)."}</p>
+                  {d.simulated ? (
+                    <p className="break-all text-xs text-muted">{d.id}</p>
+                  ) : (
+                    <>
+                      <p className="break-all text-xs text-muted">
+                        {d.id}. PayPal status: <strong className="text-foreground">{disputeStatusChip(d.status).label}</strong>{" "}
+                        ({d.status.toLowerCase().replace(/_/g, " ")}, {d.stage.toLowerCase()} stage).
+                      </p>
+                      <p className="text-xs text-muted">
+                        A real sandbox dispute is settled by PayPal, not by this demo: the sandbox does not let us decide it for PayPal. Submit evidence from the{" "}
+                        <Link href={`/dashboard/disputes/${encodeURIComponent(d.id)}`} className={A}>case page</Link> and PayPal reviews it; you can also accept the claim there.
+                      </p>
+                    </>
+                  )}
                 </div>
-                <ResolveButtons disputeId={d.id} simulated={d.simulated} />
+                {d.simulated ? <ResolveButtons disputeId={d.id} /> : <RefreshDisputeButton disputeId={d.id} />}
               </li>
             ))}
           </ul>

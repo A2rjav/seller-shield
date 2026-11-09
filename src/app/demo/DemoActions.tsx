@@ -97,19 +97,74 @@ export function SimulateDispute({ orders }: { orders: { id: string; label: strin
   );
 }
 
-export function ResolveButtons({ disputeId, simulated }: { disputeId: string; simulated: boolean }) {
+/** Simulated disputes only: closes the demo dispute locally (nothing is sent to PayPal). */
+export function ResolveButtons({ disputeId }: { disputeId: string }) {
   const { status, run } = useAction();
-  const go = (outcome: "SELLER_FAVOR" | "BUYER_FAVOR") =>
-    run("/api/demo/adjudicate", { disputeId, outcome }, (d) => (d.simulated ? "Resolved (simulated)." : "Resolved by the PayPal sandbox."));
+  const go = (outcome: "SELLER_FAVOR" | "BUYER_FAVOR") => run("/api/demo/adjudicate", { disputeId, outcome }, () => "Resolved (simulated).");
   return (
     <div className="flex flex-col items-start gap-1">
       <div className="flex flex-wrap gap-2">
         <button className={PRIMARY} disabled={status.kind === "busy"} onClick={() => go("SELLER_FAVOR")}>Resolve in seller&apos;s favour</button>
         <button className={OUTLINE} disabled={status.kind === "busy"} onClick={() => go("BUYER_FAVOR")}>Resolve in buyer&apos;s favour</button>
       </div>
-      <p className="text-[11px] text-muted">{simulated ? "Simulated: closes the demo dispute locally." : "Uses the PayPal sandbox adjudicate helper."}</p>
+      <p className="text-[11px] text-muted">Simulated: closes the demo dispute locally.</p>
       <Note status={status} />
     </div>
+  );
+}
+
+const stateText = (d: Record<string, unknown>) => {
+  const x = (d.dispute ?? {}) as { status?: string; stage?: string };
+  return `${String(x.status ?? "").toLowerCase().replace(/_/g, " ")}${x.stage ? `, ${String(x.stage).toLowerCase()} stage` : ""}`;
+};
+
+/** Real sandbox disputes: re-reads the dispute from PayPal so the page shows its current PayPal status. */
+export function RefreshDisputeButton({ disputeId }: { disputeId: string }) {
+  const { status, run } = useAction();
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <button className={OUTLINE} disabled={status.kind === "busy"} onClick={() => run("/api/demo/fetch-dispute", { disputeId }, (d) => `PayPal says: ${stateText(d)}.`)}>
+        {status.kind === "busy" ? "Checking..." : "Refresh status from PayPal"}
+      </button>
+      <Note status={status} />
+    </div>
+  );
+}
+
+/** Fetches one real sandbox dispute by the id PayPal showed the buyer, without waiting for PayPal's dispute list. */
+export function FetchDisputeForm() {
+  const { status, run } = useAction();
+  const [id, setId] = useState("");
+  return (
+    <form
+      className="space-y-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void run("/api/demo/fetch-dispute", { disputeId: id }, (d) => {
+          const x = (d.dispute ?? {}) as { id?: string; orderId?: string | null };
+          return `Fetched ${String(x.id ?? "")} (${stateText(d)})${x.orderId ? "" : ". It is not linked to an order in this demo"}. Find it in the disputes inbox.`;
+        });
+      }}
+    >
+      <div className="flex flex-wrap gap-2">
+        <label className="min-w-0 flex-1 basis-56">
+          <span className="sr-only">PayPal dispute ID</span>
+          <input
+            className={`${FIELD} w-full font-mono`}
+            value={id}
+            onChange={(e) => setId(e.target.value)}
+            placeholder="PP-R-ABC-12345678"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={48}
+          />
+        </label>
+        <button type="submit" className={OUTLINE} disabled={status.kind === "busy" || id.trim() === ""}>
+          {status.kind === "busy" ? "Fetching..." : "Fetch dispute"}
+        </button>
+      </div>
+      <Note status={status} />
+    </form>
   );
 }
 
