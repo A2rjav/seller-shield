@@ -1,0 +1,45 @@
+# Render Blueprint: one free Node web service. Neon Postgres is external (us-east-1), so the service runs in Virginia.
+# Secrets are sync: false: Render asks for their values when the Blueprint is first applied; they never live in git.
+# Migrations run on every boot (scripts/migrate.mjs, via `npm start`), because free services have no pre-deploy command.
+services:
+  - type: web
+    name: seller-shield
+    runtime: node
+    plan: free
+    region: virginia
+    branch: main
+    # --include=dev: next build needs typescript, tailwind and postcss, which are devDependencies.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PAYPAL_API_BASE
+        value: https://api-m.sandbox.paypal.com
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_MODEL_FAST
+        value: gemini-3.5-flash
+      - key: AI_DAILY_CALL_LIMIT
+        value: "300"
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
+      - key: SANDBOX_BUYER_EMAIL
+        sync: false
+      - key: SANDBOX_BUYER_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SHOPPER_AGENT_PRIVATE_JWK
+        sync: false
+      # The service's public URL (https://<name>.onrender.com): PayPal return URLs and the webhook use it.
+      - key: APP_BASE_URL
+        sync: false

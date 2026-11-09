@@ -5,13 +5,14 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/migrate.mjs && next start",
     "lint": "eslint",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "seed": "tsx scripts/seed.ts",
-    "dev:fixtures": "tsx scripts/dev-fixtures.ts"
+    "dev:fixtures": "tsx scripts/dev-fixtures.ts",
+    "db:migrate:runtime": "node scripts/migrate.mjs"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.111",
@@ -43,5 +44,8 @@
     "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -34,9 +34,9 @@ Open `/demo` on the hosted app. It lists these six steps, shows the **sandbox te
 1. **Buy as a human.** Storefront `/`, add a product, pay with PayPal, log in with the sandbox buyer shown on `/demo`.
 2. **Let the AI agent buy.** Sign a purchase mandate in `/wallet`, then ask the agent to buy in `/agent`.
 3. **See Prevent.** `/dashboard` lists orders with protection status; open an at-risk order and use the one-click fix. `/demo` also has a button to mark a shipped order delivered (simulated carrier).
-4. **Open a dispute.** Fastest: the simulated dispute form on `/demo`. Or open a real sandbox dispute as the test buyer on sandbox.paypal.com (Activity, Report a problem), then use the poll button on `/demo`.
+4. **Open a dispute.** Fastest: the simulated dispute form on `/demo`. Or open a real sandbox dispute as the test buyer in the sandbox Resolution Center (the exact clicks are on `/demo`), then paste the case ID PayPal shows (PP-R-... or PP-D-...) into the fetch box on `/demo`; the poll button reads PayPal's dispute list, which lags 3 to 6 minutes behind a new dispute.
 5. **Defend it.** `/dashboard/disputes`, open the case: recommendation, cited case, PDF evidence pack. Confirm to submit. Nothing is sent before that click.
-6. **Resolve.** Resolve from `/demo`. Simulated disputes resolve locally; real sandbox disputes settle once they are under review.
+6. **Resolve.** Simulated disputes resolve from `/demo`, locally. Real sandbox disputes are settled by PayPal, not by the demo (the sandbox did not let us adjudicate them in testing): `/demo` shows their live PayPal status with a refresh button, and the case page keeps Accept claim.
 
 ## Architecture
 
@@ -79,7 +79,7 @@ Webhook events are ingested idempotently, with a throttled poll as backup (`/api
 
 ## AI usage
 
-Google Gemini through the Vercel AI SDK (`ai` v7, `@ai-sdk/google`). Two tiers, resolved from the model list unless pinned (`src/lib/ai/gemini.ts`): **quality** (newest stable "pro", or `GEMINI_MODEL`) writes the dispute case with a low thinking setting; **fast** (newest stable "flash", or `GEMINI_MODEL_FAST`) runs the gap explanations, the Agent Toolkit investigator and the shopper agent. SDK retries are off (`maxRetries: 0`) so the daily cap counts real calls.
+Google Gemini through the Vercel AI SDK (`ai` v7, `@ai-sdk/google`). Two tiers, resolved from the model list unless pinned (`src/lib/ai/gemini.ts`): **quality** (newest stable "pro", or `GEMINI_MODEL`) writes the dispute case; **fast** (newest stable "flash", or `GEMINI_MODEL_FAST`) runs the gap explanations, the Agent Toolkit investigator and the shopper agent. Gemini 3+ models run at a low thinking level (thinking tokens count against the output budget). SDK retries are off (`maxRetries: 0`) so the daily cap counts real calls; an overloaded (503) call is retried once by the app, taking another cap slot.
 
 - **Structured output** (`generateObject`, zod schemas): the dispute case writer and plain-language protection-gap explanations.
 - **Tool calling** (`generateText` with tools): the shopper agent (`src/lib/agent/shopper-agent.ts`) and the Agent Toolkit investigator (`src/lib/defense/toolkit-gather.ts`).
@@ -92,7 +92,7 @@ Google Gemini through the Vercel AI SDK (`ai` v7, `@ai-sdk/google`). Two tiers, 
 - **Sandbox only.** All money is fake; no live PayPal credentials are used.
 - **Carrier deliveries are simulated.** The sandbox has no carriers, so "mark delivered" on `/demo` records a demo delivery, tagged **Simulated** in the UI.
 - **Simulated disputes** are created by the demo, not PayPal, and tagged **Simulated** (their evidence PDF carries a "SIMULATED DISPUTE" cover banner). Resolving one does not call PayPal. Real sandbox disputes go through the real Disputes API.
-- **Hard rules:** nothing is submitted to PayPal without the seller's confirmation, and every case sentence cites evidence, enforced by the validator in code.
+- **Hard rules:** nothing is submitted to PayPal without the seller's confirmation, and every timeline and argument entry cites evidence, enforced by the validator in code.
 - Seller Shield does not decide disputes; PayPal does.
 
 ## Local setup
@@ -130,7 +130,13 @@ npm run build
 
 ## Deploy
 
-Hosted on Render with Neon Postgres. Set the variables above, run `npm run db:migrate` and `npm run seed`, register the webhook with `scripts/register-webhook.ts`, and set `SHOPPER_AGENT_PRIVATE_JWK` so agent keys survive restarts. A `render.yaml` blueprint is not in the repo yet.
+Hosted on Render (free web service, region Virginia, next to Neon `us-east-1`) with Neon Postgres. The repo has a `render.yaml` Blueprint:
+
+1. In Render: **New > Blueprint**, pick this repo (the Blueprint deploys the `main` branch). Render asks for every `sync: false` secret: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `SANDBOX_BUYER_EMAIL`, `SANDBOX_BUYER_PASSWORD`, `GEMINI_API_KEY`, `DATABASE_URL`, `SHOPPER_AGENT_PRIVATE_JWK` and `APP_BASE_URL` (the service URL, `https://<name>.onrender.com`).
+2. Build: `npm ci --include=dev && npm run build`. Start: `npm start`, which first runs `scripts/migrate.mjs` (drizzle migrations at boot, since free services have no pre-deploy command; idempotent) and then `next start`.
+3. Once, from a machine with the same `.env`: `npm run seed` loads the baseline sandbox orders, and `npx tsx scripts/register-webhook.ts` registers the webhook for `APP_BASE_URL`.
+
+The baseline orders in `scripts/baseline-orders.json` are real captured sandbox orders. To make a new agent baseline order (mandate signed, agent checkout, sandbox buyer approval in Chrome, capture): `npx tsx scripts/make-agent-baseline.ts`, then `npm run seed`. Live checks: `scripts/live-ai-check.ts` (case writer and gap explanations on real Gemini) and `scripts/live-shopper-check.ts` (shopper agent through `/api/agent/chat`); `scripts/db-status.ts` prints the seeded rows.
 
 ## Built during the hackathon
 
