@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb } from "../helpers/testDb";
-import { fakePaypal, insertMandate } from "./helpers";
+import { fakePaypal, insertMandate, ppOrder } from "./helpers";
 import type { Db } from "@/lib/db/client";
 import { cases, disputes, mandates, messages, orders, protectionChecks, shipments } from "@/lib/db/schema";
-import { seedDemo, seedModeError, type BaselineEntry } from "@/lib/demo/seed";
+import { describeError, seedDemo, seedModeError, type BaselineEntry } from "@/lib/demo/seed";
+import { readTrackers } from "@/lib/paypal/orders";
 
 const ENTRIES: BaselineEntry[] = [
   { orderId: "O-DELIVERED", scenario: "protected_delivered" },
@@ -95,6 +96,64 @@ describe("seedDemo", () => {
     });
     expect(r.warnings.join(" ")).toContain("O-DELIVERED");
     expect(r.seeded).toBe(1);
+  });
+});
+
+/** A real-shaped PayPal order that already carries tracking (tracker ids are "<captureId>-<number>", no carrier field). */
+function withTrackers(id: string, ...trackers: { number: string; status?: string }[]) {
+  const o = ppOrder(id);
+  (o.purchase_units[0] as Record<string, unknown>).shipping = {
+    ...o.purchase_units[0].shipping,
+    trackers: trackers.map((t) => ({ id: `CAP-${id}-${t.number}`, status: t.status ?? "SHIPPED", items: [], links: [] })),
+  };
+  return o;
+}
+
+describe("seedDemo with tracking already on PayPal (live sandbox data)", () => {
+  it("adopts the existing tracker as the pushed shipment and never adds a second one", async () => {
+    const db = await createTestDb();
+    const calls: string[] = [];
+    const deps = {
+      getOrder: async (id: string) => withTrackers(id, { number: "1Z999AA10123456784" }),
+      addTracking: async (i: { orderId: string }) => void calls.push(i.orderId),
+      entries: [{ orderId: "O-TRK", scenario: "protected_delivered" as const }],
+    };
+    const r = await seedDemo(db, deps);
+    await seedDemo(db, deps);
+    expect(r.warnings).toEqual([]);
+    expect(calls).toEqual([]);
+    const [s] = await db.select().from(shipments).where(eq(shipments.orderId, "O-TRK"));
+    expect(s).toMatchObject({ carrier: "UPS", trackingNumber: "1Z999AA10123456784", pushedToPaypal: true, pushSimulated: false, status: "delivered" });
+  });
+
+  it("warns when a tracking_not_pushed order already has PayPal tracking", async () => {
+    const db = await createTestDb();
+    const r = await seedDemo(db, {
+      getOrder: async (id: string) => withTrackers(id, { number: "9400100000000000000000" }),
+      addTracking: async () => {},
+      entries: [{ orderId: "O-NP", scenario: "tracking_not_pushed" }],
+    });
+    expect(r.warnings.join(" ")).toMatch(/already holds tracking/);
+  });
+});
+
+describe("readTrackers", () => {
+  it("strips the capture id prefix, skips cancelled trackers and infers UPS only from 1Z numbers", () => {
+    const o = withTrackers("O1", { number: "1Z999AA10123456784" }, { number: "JT22Y249172J758430" }, { number: "OLD1", status: "CANCELLED" });
+    expect(readTrackers(o)).toEqual([
+      { trackingNumber: "1Z999AA10123456784", carrier: "UPS" },
+      { trackingNumber: "JT22Y249172J758430", carrier: null },
+    ]);
+    expect(readTrackers(ppOrder("O2"))).toEqual([]);
+    expect(readTrackers(null)).toEqual([]);
+  });
+});
+
+describe("describeError", () => {
+  it("surfaces the driver cause behind a drizzle 'Failed query' error", () => {
+    const e = new Error("Failed query: select 1\nparams: x", { cause: new Error("connect ETIMEDOUT") });
+    expect(describeError(e)).toBe("Failed query: select 1 (cause: connect ETIMEDOUT)");
+    expect(describeError(new Error("plain"))).toBe("plain");
   });
 });
 

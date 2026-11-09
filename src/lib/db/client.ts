@@ -10,6 +10,7 @@ import * as schema from "./schema";
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
 let instance: Db | undefined;
+let pgClient: ReturnType<typeof postgres> | undefined;
 
 /**
  * Lazily connects on first use; never reads DATABASE_URL at import time.
@@ -20,11 +21,20 @@ export function getDb(): Db {
     if (resolveDbMode(process.env) === "dev-pglite") {
       instance = getDevDb() as unknown as Db;
     } else {
-      const client = postgres(getDatabaseUrl(), { max: 5, prepare: false });
-      instance = drizzle(client, { schema }) as unknown as Db;
+      // idle_timeout lets idle sockets close (Neon drops them anyway), so short scripts and serverless-style idling do not hold stale connections.
+      pgClient = postgres(getDatabaseUrl(), { max: 5, prepare: false, idle_timeout: 20, connect_timeout: 30 });
+      instance = drizzle(pgClient, { schema }) as unknown as Db;
     }
   }
   return instance;
+}
+
+/** Ends the postgres-js pool (scripts call this so Node can exit). Dev PGlite is closed with closeDevDb(). */
+export async function closeDb(): Promise<void> {
+  const c = pgClient;
+  pgClient = undefined;
+  instance = undefined;
+  if (c) await c.end({ timeout: 5 });
 }
 
 /** Lazy proxy so `import { db }` is safe without DATABASE_URL. */

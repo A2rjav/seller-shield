@@ -79,6 +79,25 @@ export function readCustomId(res: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+/**
+ * Tracking already attached to a captured PayPal order (GET order -> purchase_units[0].shipping.trackers), cancelled ones excluded.
+ * PayPal returns tracker ids as "<captureId>-<trackingNumber>" and no carrier, so the carrier is inferred only for UPS "1Z" numbers.
+ */
+export function readTrackers(res: unknown): { trackingNumber: string; carrier: string | null }[] {
+  const pu = (res as { purchase_units?: { shipping?: { trackers?: { id?: unknown; status?: unknown }[] }; payments?: { captures?: { id?: string }[] } }[] } | null)
+    ?.purchase_units?.[0];
+  const captureIds = (pu?.payments?.captures ?? []).map((c) => c.id).filter((id): id is string => typeof id === "string" && id.length > 0);
+  const out: { trackingNumber: string; carrier: string | null }[] = [];
+  for (const t of pu?.shipping?.trackers ?? []) {
+    if (typeof t.id !== "string" || t.status === "CANCELLED") continue;
+    const prefix = captureIds.find((c) => t.id !== c && (t.id as string).startsWith(`${c}-`));
+    const trackingNumber = prefix ? t.id.slice(prefix.length + 1) : t.id;
+    if (!trackingNumber) continue;
+    out.push({ trackingNumber, carrier: /^1Z/i.test(trackingNumber) ? "UPS" : null });
+  }
+  return out;
+}
+
 /** Line items of a PayPal order, with amounts converted to cents. */
 export function mapOrderItems(res: unknown): { sku: string; name: string; qty: number; priceCents: number }[] {
   const list =

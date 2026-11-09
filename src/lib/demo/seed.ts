@@ -2,7 +2,7 @@ import { eq, or } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { resolveDbMode } from "@/lib/db/mode";
 import { disputes, mandates, orders, shipments } from "@/lib/db/schema";
-import { mapCapturedOrder, mapOrderItems } from "@/lib/paypal/orders";
+import { mapCapturedOrder, mapOrderItems, readTrackers } from "@/lib/paypal/orders";
 import type { AddTrackingInput } from "@/lib/paypal/tracking";
 import type { Address } from "@/lib/paypal/types";
 import { recordCapturedOrder } from "@/lib/orders/record";
@@ -31,6 +31,14 @@ export function seedModeError(env: Record<string, string | undefined>, dev: bool
   return null;
 }
 
+/** Error text for a warning. Drizzle wraps driver errors as "Failed query: <sql>", so the driver's own message (the cause) is what explains it. */
+export function describeError(e: unknown): string {
+  if (!(e instanceof Error)) return "seed failed";
+  const cause = (e as { cause?: unknown }).cause;
+  if (cause instanceof Error && cause.message) return `${e.message.split("\n")[0]} (cause: ${cause.message})`;
+  return e.message;
+}
+
 /** Random 22-digit USPS-style test number, so a re-created unpushed shipment never reuses a number already on PayPal. */
 const freshTracking = () => `94${Array.from({ length: 20 }, () => Math.floor(Math.random() * 10)).join("")}`;
 
@@ -45,18 +53,35 @@ async function currentShipment(db: Db, orderId: string) {
   return s;
 }
 
-/** Local shipment/dispute data for one scenario. PayPal writes: add-tracking, once, and only if not already pushed. */
-async function applyScenario(db: Db, entry: BaselineEntry, deps: SeedDeps, warnings: string[]) {
+/**
+ * Local shipment/dispute data for one scenario. PayPal writes: add-tracking, once, and only if not already pushed.
+ * Tracking PayPal already holds for the order (`paypalOrder` trackers) is adopted as the pushed shipment instead of adding a second tracker,
+ * so a fresh database never stacks demo trackers on a real order.
+ */
+async function applyScenario(db: Db, entry: BaselineEntry, deps: SeedDeps, warnings: string[], paypalOrder: unknown) {
   const { orderId, scenario } = entry;
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
   const carrier = scenario === "awaiting_delivery_850" ? "UPS" : "USPS";
-  // Scenario tracking numbers are made up by the demo, so these shipments stay flagged simulated.
+  const onPaypal = readTrackers(paypalOrder)[0];
+  if (onPaypal && scenario === "tracking_not_pushed") {
+    warnings.push(`${orderId}: PayPal already holds tracking for this order, so it cannot demonstrate "tracking not pushed". Use an order without tracking.`);
+  }
+  // Scenario tracking numbers are made up by the demo, and delivery is simulated, so these shipments stay flagged simulated.
   const ship = async (shipTo?: Address) => {
     const existing = await currentShipment(db, orderId);
     if (existing) return existing;
-    const trackingNumber = scenario === "tracking_not_pushed" ? freshTracking() : trackingFor(orderId);
-    const added = await addShipment(db, orderId, { carrier, trackingNumber, ...(shipTo ? { shipToAddress: shipTo } : {}) });
-    const [row] = await db.update(shipments).set({ simulated: true }).where(eq(shipments.id, added.id)).returning();
+    const adopt = onPaypal && scenario !== "tracking_not_pushed" ? onPaypal : null;
+    const trackingNumber = adopt ? adopt.trackingNumber : scenario === "tracking_not_pushed" ? freshTracking() : trackingFor(orderId);
+    const added = await addShipment(db, orderId, {
+      carrier: adopt?.carrier ?? carrier,
+      trackingNumber,
+      ...(shipTo ? { shipToAddress: shipTo } : {}),
+    });
+    const [row] = await db
+      .update(shipments)
+      .set({ simulated: true, ...(adopt ? { pushedToPaypal: true, pushedAt: new Date(), pushSimulated: false } : {}) })
+      .where(eq(shipments.id, added.id))
+      .returning();
     return row;
   };
   const push = async (s: { id: string; pushedToPaypal: boolean }) => {
@@ -141,11 +166,11 @@ export async function seedDemo(db: Db, deps: SeedDeps): Promise<SeedResult> {
         items: mapOrderItems(res),
         ...(mandateId ? { mandateId } : {}),
       });
-      await applyScenario(db, entry, deps, warnings);
+      await applyScenario(db, entry, deps, warnings, res);
       await recomputeProtection(db, orderId);
       seeded++;
     } catch (e) {
-      warnings.push(`${orderId}: ${e instanceof Error ? e.message : "seed failed"}`);
+      warnings.push(`${orderId}: ${describeError(e)}`);
       failures++;
     }
   }
