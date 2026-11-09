@@ -1,6 +1,6 @@
 import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
-import { getGeminiModel, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
+import { getGeminiModel, isOverloaded, OVERLOAD_RETRY_MS, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
 import { getProduct, products } from "@/lib/catalog";
 import type { Db } from "@/lib/db/client";
 import { formatMoney } from "@/lib/format";
@@ -107,6 +107,7 @@ class CapReached extends Error {}
 export type ChatDeps = AgentDeps & {
   consume?: () => Promise<boolean>;
   loadModel?: () => Promise<unknown>;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 /** Gemini tool loop. Every model step consumes one slot of the daily AI cap; a refusal on the first step means the AI is unavailable. */
@@ -116,9 +117,11 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
   const events: AgentEvent[] = [];
   const tools = buildShopperTools({ db: input.db, shopperJws: input.shopperJws, events, checkoutDeps: deps.checkoutDeps, agentSigner: deps.agentSigner });
   const consume = deps.consume ?? tryConsumeAiCall;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   try {
-    const result = await generateText({
-      model: await (deps.loadModel ?? (() => getGeminiModel("fast")))(),
+    const model = await (deps.loadModel ?? (() => getGeminiModel("fast")))();
+    const loop = () => generateText({
+      model,
       ...TOOL_LOOP_OPTIONS,
       tools,
       stopWhen: stepCountIs(MAX_SHOPPER_STEPS),
@@ -133,9 +136,20 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
         "After checkout, tell the shopper to approve the payment in PayPal. If the merchant refuses, explain why in plain words. Be brief.",
       messages: input.messages,
     } as never);
+    let result: Awaited<ReturnType<typeof loop>>;
+    try {
+      result = await loop();
+    } catch (err) {
+      // The free Gemini tier often answers 503 "high demand". Retry the loop once, only while nothing has happened yet
+      // (no checkout or refusal), so a retry can never place a second order. Every step still takes a cap slot.
+      if (events.length > 0 || !isOverloaded(err)) throw err;
+      await sleep(OVERLOAD_RETRY_MS);
+      result = await loop();
+    }
     if (!result.text.trim() && events.length === 0) return { aiUnavailable: true };
     return { text: result.text, events };
-  } catch {
+  } catch (err) {
+    console.warn("Shopper agent AI failed:", err instanceof Error ? `${err.name}: ${err.message.slice(0, 160)}` : "error");
     // A failure mid-loop with nothing to show (no order, no refusal) is an AI failure, not a result.
     if (events.length === 0) return { aiUnavailable: true };
     return { text: "", events };
