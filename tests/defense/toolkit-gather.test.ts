@@ -129,7 +129,7 @@ describe("createToolkitAgent", () => {
         throw new APICallError({ message: "overloaded", url: "u", requestBodyValues: {}, statusCode: 503, isRetryable: true });
       }) as never,
     });
-    const agent = createToolkitAgent({ consume: async () => true, loadTools: async () => ({}), loadModel: async () => model });
+    const agent = createToolkitAgent({ consume: async () => true, loadTools: async () => ({}), loadModel: async () => model, noteFailure: () => false });
     await agent({ disputeId: "PP-D-77" });
     expect(calls).toBe(1);
   });

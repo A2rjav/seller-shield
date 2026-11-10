@@ -24,6 +24,7 @@ export default function CaseActions({
   currency,
   offerCents,
   offerBlockedReason = null,
+  acceptBlockedReason = null,
   submitBlockedReason,
   priorAction,
   notesPreview,
@@ -40,6 +41,8 @@ export default function CaseActions({
   offerCents: number;
   /** Set when the dispute stage does not allow offers (chargeback); the button is disabled and this line shown. */
   offerBlockedReason?: string | null;
+  /** Set when PayPal offers no accept-claim action on a real dispute. */
+  acceptBlockedReason?: string | null;
   submitBlockedReason: string | null;
   priorAction: string | null;
   notesPreview: string;
@@ -115,11 +118,12 @@ export default function CaseActions({
         <button
           type="button"
           onClick={() => setOpen("accept")}
-          disabled={resolved || acceptDone}
+          disabled={resolved || acceptDone || !!acceptBlockedReason}
           className={`${btn} border border-orange-200 bg-white text-orange-800 hover:bg-orange-50`}
         >
           Accept claim and refund
         </button>
+        {acceptBlockedReason && !resolved ? <p className="text-xs text-muted">{acceptBlockedReason}</p> : null}
         {resolved ? <p className="text-xs text-muted">This dispute is resolved; no further action is possible.</p> : null}
         {last ? (
           <p role="status" className="flex items-start gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-900">

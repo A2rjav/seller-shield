@@ -220,6 +220,17 @@ describe("submitOffer / submitAccept", () => {
     }
   });
 
+  it("accept is refused before calling PayPal when the live dispute has no accept-claim link", async () => {
+    const { db } = await setup(false);
+    const api = paypal();
+    api.getDispute.mockResolvedValue({ ...fresh, links: [{ rel: "self" }, { rel: "provide_supporting_info" }] });
+    const r = await submitAccept(db, "D1", { sellerConfirmed: true }, { api });
+    expect(r).toEqual({ submitted: false, error: "PayPal is reviewing this dispute; it cannot be accepted from here right now." });
+    expect(api.acceptClaim).not.toHaveBeenCalled();
+    api.getDispute.mockResolvedValue({ ...fresh, links: [{ rel: "accept_claim" }] });
+    expect((await submitAccept(db, "D1", { sellerConfirmed: true }, { api })).submitted).toBe(true);
+  });
+
   it("accept requires confirmation, and simulated disputes skip PayPal", async () => {
     const { db } = await setup(false);
     const api = paypal();

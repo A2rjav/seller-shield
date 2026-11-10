@@ -283,10 +283,11 @@ describe("model fallback on quota (live 2026-11-10: 20 free-tier requests per da
     expect(blocked.get("a")).toBe(1000 + (2 * 3600 + 4 * 60 + 10.5) * 1000);
     expect(noteModelFailure("b", Object.assign(new Error("not found"), { statusCode: 404 }), 0, blocked)).toBe(true);
     expect(blocked.get("b")).toBe(24 * 3600_000);
-    expect(noteModelFailure("c", Object.assign(new Error("overloaded"), { statusCode: 503 }), 0, blocked)).toBe(false);
+    expect(noteModelFailure("c", Object.assign(new Error("overloaded"), { statusCode: 503 }), 5, blocked)).toBe(true);
+    expect(blocked.get("c")).toBe(5 + 30_000);
     expect(noteModelFailure("d", new Error("boom"), 0, blocked)).toBe(false);
     expect(noteModelFailure("", quota429, 0, blocked)).toBe(false);
-    expect(blocked.has("c") || blocked.has("d")).toBe(false);
+    expect(blocked.has("d")).toBe(false);
   });
 
   it("availableModels skips blocked models until they reopen, and keeps the primary when all are blocked", () => {
@@ -311,6 +312,22 @@ describe("model fallback on quota (live 2026-11-10: 20 free-tier requests per da
     const other = vi.fn(async () => { throw boom; });
     await expect(generateWithFallback(["x", "y"], other, note)).rejects.toBe(boom);
     expect(other).toHaveBeenCalledTimes(1);
+  });
+
+  it("generateWithFallback moves past an overloaded (503) model, blocks it ~30 s, and stays bounded", async () => {
+    const blocked = new Map<string, number>();
+    const note = (id: string, e: unknown) => noteModelFailure(id, e, 0, blocked);
+    const over = Object.assign(new Error("The model is overloaded. Please try again later."), { statusCode: 503 });
+    const call = vi.fn(async (id: string) => {
+      if (id !== "f2") throw over;
+      return `ok:${id}`;
+    });
+    expect(await generateWithFallback(["p", "f1", "f2"], call, note)).toBe("ok:f2");
+    expect(call.mock.calls.map((c) => c[0])).toEqual(["p", "f1", "f2"]);
+    expect(blocked.get("p")).toBe(30_000);
+    const all = vi.fn(async () => { throw over; });
+    await expect(generateWithFallback(["p", "f1"], all, note)).rejects.toBe(over);
+    expect(all).toHaveBeenCalledTimes(2);
   });
 
   it("getAiConfig reads GEMINI_MODEL_FALLBACKS as a list", () => {

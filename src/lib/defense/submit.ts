@@ -197,6 +197,11 @@ export async function submitAccept(
       await db.update(cases).set({ submitResult: { simulated: true, action: "accept" } }).where(eq(cases.id, caseId(disputeId)));
       return { submitted: true, simulated: true };
     }
+    try {
+      if (paypalDisputes.acceptClaimUnavailable(await api.getDispute(disputeId))) return refuse(paypalDisputes.ACCEPT_BLOCKED_REASON);
+    } catch {
+      // PayPal unreachable for the read: let the accept call itself answer
+    }
     const note = typeof body.note === "string" && body.note.trim() ? body.note.trim() : DEFAULT_ACCEPT_NOTE;
     try {
       await api.acceptClaim(disputeId, note);

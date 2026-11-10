@@ -33,6 +33,20 @@ export function evidenceRoute(d: Pick<PaypalDispute, "links"> | null | undefined
   return "none";
 }
 
+export const ACCEPT_BLOCKED_REASON = "PayPal is reviewing this dispute; it cannot be accepted from here right now.";
+
+/** True when PayPal's links are present but offer no accept-claim action (no links at all means "not known": allowed). */
+export function acceptClaimUnavailable(d: Pick<PaypalDispute, "links"> | null | undefined): boolean {
+  const rels = d?.links?.map((l) => l.rel);
+  return !!rels && rels.length > 0 && !rels.includes("accept_claim");
+}
+
+/** What the case page offers for a real dispute, from the freshest PayPal read (or the stored one). */
+export function liveActions(d: Pick<PaypalDispute, "links" | "status"> | null | undefined): { evidenceRoute: EvidenceRoute; acceptBlockedReason: string | null } {
+  const reviewing = String(d?.status ?? "").toUpperCase() === "UNDER_REVIEW";
+  return { evidenceRoute: evidenceRoute(d), acceptBlockedReason: reviewing || acceptClaimUnavailable(d) ? ACCEPT_BLOCKED_REASON : null };
+}
+
 export function disputeAmount(d: Pick<PaypalDispute, "dispute_amount">): { amountCents: number; currency: string } {
   return { amountCents: toCents(d.dispute_amount.value), currency: d.dispute_amount.currency_code };
 }

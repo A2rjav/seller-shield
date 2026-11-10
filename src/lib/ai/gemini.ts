@@ -202,6 +202,9 @@ function isNotFound(err: unknown): boolean {
  * Records a model failure. True when the error means "use another model" (quota 429 or 404): the model is then
  * skipped until Gemini's retry time (429; 1 minute when none is given) or for a day (404). False for other errors.
  */
+/** How long a model that answered 503 is skipped. */
+export const OVERLOADED_BLOCK_MS = 30_000;
+
 export function noteModelFailure(modelId: string, err: unknown, now = Date.now(), blocked: BlockedModels = blockedModels): boolean {
   if (!modelId) return false;
   if (isRateLimited(err)) {
@@ -210,6 +213,10 @@ export function noteModelFailure(modelId: string, err: unknown, now = Date.now()
   }
   if (isNotFound(err)) {
     blocked.set(modelId, now + 24 * 3600_000);
+    return true;
+  }
+  if (isOverloaded(err)) {
+    blocked.set(modelId, now + OVERLOADED_BLOCK_MS);
     return true;
   }
   return false;

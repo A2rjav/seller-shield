@@ -35,6 +35,8 @@ export type CaseWorkspaceProps = {
     stage: string;
     /** From the last PayPal read of this dispute: how documents can reach PayPal now. */
     evidenceRoute?: EvidenceRoute;
+    /** Set when a real dispute has no accept-claim action right now. */
+    acceptBlockedReason?: string | null;
   };
   built: BuiltCase | null;
   priorAction: string | null;
@@ -216,6 +218,7 @@ export default function CaseWorkspace({ dispute, built, priorAction, coverage, f
             currency={dispute.currency}
             offerCents={built?.recommendation.offerCents ?? Math.round(dispute.amountCents / 2)}
             offerBlockedReason={offerBlockedReason(dispute.stage)}
+            acceptBlockedReason={dispute.acceptBlockedReason ?? null}
             submitBlockedReason={
               !built
                 ? "Build the case first."

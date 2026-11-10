@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPaypalClient } from "@/lib/paypal/client";
-import { createDisputesApi, disputeAmount, evidenceRoute } from "@/lib/paypal/disputes";
+import { ACCEPT_BLOCKED_REASON, acceptClaimUnavailable, createDisputesApi, disputeAmount, evidenceRoute, liveActions } from "@/lib/paypal/disputes";
 import { config, fakeFetch, json } from "./helpers";
 
 function setup(reply: unknown = {}) {
@@ -96,6 +96,17 @@ describe("disputes api request shapes", () => {
     expect(evidenceRoute(l("self"))).toBe("none");
     expect(evidenceRoute({})).toBe("unknown");
     expect(evidenceRoute(null)).toBe("unknown");
+  });
+
+  it("liveActions decides the evidence route and the accept-claim state from fresh dispute data", () => {
+    const l = (status: string, ...rels: string[]) => ({ status, links: rels.map((rel) => ({ rel })) });
+    expect(liveActions(l("WAITING_FOR_SELLER_RESPONSE", "provide_evidence", "accept_claim"))).toEqual({ evidenceRoute: "evidence", acceptBlockedReason: null });
+    expect(liveActions(l("UNDER_REVIEW", "self", "provide_supporting_info"))).toEqual({ evidenceRoute: "supporting_info", acceptBlockedReason: ACCEPT_BLOCKED_REASON });
+    expect(liveActions(l("UNDER_REVIEW", "accept_claim")).acceptBlockedReason).toBe(ACCEPT_BLOCKED_REASON);
+    expect(liveActions({ status: "OPEN" })).toEqual({ evidenceRoute: "unknown", acceptBlockedReason: null });
+    expect(liveActions(null)).toEqual({ evidenceRoute: "unknown", acceptBlockedReason: null });
+    expect(acceptClaimUnavailable({ links: [{ rel: "self" }] })).toBe(true);
+    expect(acceptClaimUnavailable({})).toBe(false);
   });
 
   it("makeOffer sends a REFUND offer with a PayPal amount string", async () => {

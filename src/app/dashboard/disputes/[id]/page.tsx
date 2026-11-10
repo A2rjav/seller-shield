@@ -16,7 +16,25 @@ import { DISPUTE_FEE_CENTS } from "@/lib/defense/recommend";
 import { buildEvidenceFolder } from "@/lib/evidence/folder";
 import { coverage, REASON_REQUIREMENTS } from "@/lib/evidence/requirements";
 import { formatMoney } from "@/lib/format";
-import { evidenceRoute, type PaypalDispute } from "@/lib/paypal/disputes";
+import { getDispute, liveActions, type PaypalDispute } from "@/lib/paypal/disputes";
+import { ingestDispute } from "@/lib/disputes/ingest";
+
+const FRESH_READ_MS = 3000;
+
+/** A fresh PayPal read of a real dispute (short timeout), folded into the stored row. Null when PayPal is slow or unreachable. */
+async function freshDispute(id: string): Promise<PaypalDispute | null> {
+  try {
+    const fresh = await Promise.race([
+      getDispute(id),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), FRESH_READ_MS)),
+    ]);
+    const t = fresh.update_time ? new Date(fresh.update_time) : new Date();
+    await ingestDispute(db, fresh, { eventTime: Number.isNaN(t.getTime()) ? new Date() : t });
+    return fresh;
+  } catch {
+    return null;
+  }
+}
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +44,10 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const detail = await getDisputeDetail(db, id);
   if (!detail) notFound();
-  const { dispute, caseRow, order } = detail;
+  const { caseRow, order } = detail;
+  const live = detail.dispute.simulated ? null : await freshDispute(id);
+  // Re-read after the ingest so status and stage on the page match PayPal.
+  const dispute = live ? ((await getDisputeDetail(db, id))?.dispute ?? detail.dispute) : detail.dispute;
 
   const reason = resolveReason(dispute.reason);
   const req = REASON_REQUIREMENTS[reason];
@@ -51,6 +72,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
   const chip = disputeStatusChip(dispute.status);
   const due = dueCountdown(dispute.sellerResponseDue, new Date());
   const open = isOpenDispute(dispute.status);
+  const actions = liveActions(live ?? (dispute.raw as PaypalDispute | null));
   const prior = (caseRow?.submitResult ?? null) as { action?: string } | null;
 
   return (
@@ -122,7 +144,8 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           resolved: !open,
           evidenceType: req.paypalEvidenceType,
           stage: dispute.stage,
-          evidenceRoute: dispute.simulated ? "evidence" : evidenceRoute(dispute.raw as PaypalDispute | null),
+          evidenceRoute: dispute.simulated ? "evidence" : actions.evidenceRoute,
+          acceptBlockedReason: dispute.simulated ? null : actions.acceptBlockedReason,
         }}
         built={built}
         priorAction={prior?.action ?? null}
