@@ -11,7 +11,7 @@ services:
     # --include=dev: next build needs typescript, tailwind and postcss, which are devDependencies.
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
-    healthCheckPath: /
+    healthCheckPath: /api/health
     autoDeploy: true
     envVars:
       - key: NODE_VERSION

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createTestDb } from "../helpers/testDb";
 import type { Db } from "@/lib/db/client";
-import { disputes, messages, orders } from "@/lib/db/schema";
+import { demoState, disputes, messages, orders } from "@/lib/db/schema";
 import { PaypalError } from "@/lib/paypal/client";
 import type { PaypalDispute } from "@/lib/paypal/disputes";
 
@@ -70,6 +70,7 @@ describe("POST /api/demo/fetch-dispute", () => {
 
   it("accepts PP-D ids and refreshes an already stored dispute without duplicating it", async () => {
     expect((await post({ disputeId: "PP-D-12345" })).status).toBe(200);
+    await holder.db.delete(demoState); // lift the throttle: this test is about refreshing, not rate limiting
     holder.getDispute = async (id) => sandboxDispute(id, { status: "UNDER_REVIEW", update_time: "2026-11-09T13:00:00.000Z" });
     const body = await (await post({ disputeId: "PP-D-12345" })).json();
     expect(body).toMatchObject({ created: false, changed: true, dispute: { status: "UNDER_REVIEW" } });
@@ -102,5 +103,42 @@ describe("POST /api/demo/fetch-dispute", () => {
     const res = await post({ disputeId: "PP-R-ABC-1" });
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain("upstream detail");
+  });
+
+  describe("throttle", () => {
+    it("answers 429 with Retry-After for the same id within 15 s, without calling PayPal again", async () => {
+      expect((await post({ disputeId: "PP-R-ABC-1" })).status).toBe(200);
+      const res = await post({ disputeId: "pp-r-abc-1" });
+      expect(res.status).toBe(429);
+      expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0);
+      expect(Number(res.headers.get("Retry-After"))).toBeLessThanOrEqual(15);
+      expect(holder.calls).toEqual(["PP-R-ABC-1"]);
+    });
+
+    it("allows the same id again once 15 s have passed, and other ids meanwhile", async () => {
+      await post({ disputeId: "PP-R-ABC-1" });
+      expect((await post({ disputeId: "PP-R-ABC-2" })).status).toBe(200);
+      await holder.db.update(demoState).set({ updatedAt: sql`now() - interval '16 seconds'` }).where(eq(demoState.key, "fetch:PP-R-ABC-1"));
+      expect((await post({ disputeId: "PP-R-ABC-1" })).status).toBe(200);
+    });
+
+    it("caps fetches at 10 per minute globally, then recovers when the window expires", async () => {
+      for (let i = 1; i <= 10; i++) expect((await post({ disputeId: `PP-R-CAP-${i}` })).status).toBe(200);
+      const res = await post({ disputeId: "PP-R-CAP-11" });
+      expect(res.status).toBe(429);
+      expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0);
+      expect(holder.calls).toHaveLength(10);
+      // the refused id was not charged its own 15 s
+      await holder.db.update(demoState).set({ updatedAt: sql`now() - interval '61 seconds'` }).where(eq(demoState.key, "fetch_window"));
+      expect((await post({ disputeId: "PP-R-CAP-11" })).status).toBe(200);
+    });
+
+    it("does not count malformed bodies or throttled repeats against the cap", async () => {
+      await post({ disputeId: "bad" });
+      for (let i = 0; i < 5; i++) await post({ disputeId: "PP-R-SAME-1" });
+      expect(holder.calls).toEqual(["PP-R-SAME-1"]);
+      const [w] = await holder.db.select().from(demoState).where(eq(demoState.key, "fetch_window"));
+      expect(w.value).toEqual({ n: 1 });
+    });
   });
 });

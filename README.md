@@ -2,7 +2,7 @@
 
 **An AI copilot that keeps small PayPal sellers' money safe from disputes, including "my AI bought it, not me".**
 
-Live demo: <RENDER_URL>
+Live demo: https://seller-shield-id5n.onrender.com
 Video: <YOUTUBE_URL>
 
 Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/). PayPal sandbox only, fake money. MIT licensed.
@@ -123,7 +123,7 @@ npm run dev              # http://localhost:3000
 Tests, lint, build:
 
 ```bash
-npm test         # vitest, offline, in-memory Postgres: 379 tests in 42 files
+npm test         # vitest, offline, in-memory Postgres: 402 tests in 43 files
 npm run lint
 npm run build
 ```
@@ -132,7 +132,7 @@ npm run build
 
 Hosted on Render (free web service, region Virginia, next to Neon `us-east-1`) with Neon Postgres. The repo has a `render.yaml` Blueprint:
 
-1. In Render: **New > Blueprint**, pick this repo (the Blueprint deploys the `main` branch). Render asks for every `sync: false` secret: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `SANDBOX_BUYER_EMAIL`, `SANDBOX_BUYER_PASSWORD`, `GEMINI_API_KEY`, `DATABASE_URL`, `SHOPPER_AGENT_PRIVATE_JWK` and `APP_BASE_URL` (the service URL, `https://<name>.onrender.com`).
+1. In Render: **New > Blueprint**, pick this repo (the Blueprint deploys the `main` branch). Render asks for every `sync: false` secret: `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`, `SANDBOX_BUYER_EMAIL`, `SANDBOX_BUYER_PASSWORD`, `GEMINI_API_KEY`, `DATABASE_URL`, `SHOPPER_AGENT_PRIVATE_JWK` and `APP_BASE_URL`. The service URL is only known once the service exists, so enter a placeholder for `APP_BASE_URL` at first, then set it to the real `https://<name>.onrender.com` URL (this deployment: `https://seller-shield-id5n.onrender.com`) and redeploy, because PayPal return URLs and the webhook use it. The service health check is `GET /api/health`.
 2. Build: `npm ci --include=dev && npm run build`. Start: `npm start`, which first runs `scripts/migrate.mjs` (drizzle migrations at boot, since free services have no pre-deploy command; idempotent) and then `next start`.
 3. Once, from a machine with the same `.env`: `npm run seed` loads the baseline sandbox orders, and `npx tsx scripts/register-webhook.ts` registers the webhook for `APP_BASE_URL`.
 
