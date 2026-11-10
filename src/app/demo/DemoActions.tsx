@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import SimulatedTag from "@/components/dashboard/SimulatedTag";
+import { disputeCaseHref } from "@/lib/dashboard/view";
 
-type Status = { kind: "idle" | "busy" | "ok" | "error"; msg?: string };
+type Status = { kind: "idle" | "busy" | "ok" | "error"; msg?: string; href?: string };
 
 const BTN = "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 const PRIMARY = `${BTN} bg-green text-white hover:bg-[#243a2b]`;
@@ -15,7 +17,7 @@ const FIELD = "min-w-0 rounded-lg border border-[#d9cfba] bg-white px-2.5 py-1.5
 function useAction() {
   const router = useRouter();
   const [status, setStatus] = useState<Status>({ kind: "idle" });
-  async function run(url: string, body: unknown, okMsg: (data: Record<string, unknown>) => string) {
+  async function run(url: string, body: unknown, okMsg: (data: Record<string, unknown>) => string, okHref?: (data: Record<string, unknown>) => string | undefined) {
     setStatus({ kind: "busy" });
     try {
       const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
@@ -23,7 +25,7 @@ function useAction() {
       if (!res.ok) {
         setStatus({ kind: "error", msg: typeof data.error === "string" ? data.error : "Something went wrong. Please try again." });
       } else {
-        setStatus({ kind: "ok", msg: okMsg(data) });
+        setStatus({ kind: "ok", msg: okMsg(data), href: okHref?.(data) });
         router.refresh();
       }
       return res.ok;
@@ -40,6 +42,12 @@ function Note({ status }: { status: Status }) {
   return (
     <p role={status.kind === "error" ? "alert" : "status"} className={`text-xs ${status.kind === "error" ? "text-[#9b2c1d]" : "text-[#2f6b3f]"}`}>
       {status.msg}
+      {status.kind === "ok" && status.href ? (
+        <>
+          {" "}
+          <Link href={status.href} className="font-medium underline underline-offset-2 hover:no-underline">Open the case</Link>
+        </>
+      ) : null}
     </p>
   );
 }
@@ -72,7 +80,8 @@ export function SimulateDispute({ orders }: { orders: { id: string; label: strin
       className="space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
-        void run("/api/demo/dispute", { orderId, reason }, (d) => `Simulated dispute ${String((d.dispute as { id?: string })?.id ?? "")} opened. Find it in the disputes inbox.`);
+        const idOf = (d: Record<string, unknown>) => String((d.dispute as { id?: string })?.id ?? "");
+        void run("/api/demo/dispute", { orderId, reason }, (d) => `Simulated dispute ${idOf(d)} opened.`, (d) => disputeCaseHref(idOf(d)));
       }}
     >
       <div className="flex flex-wrap gap-2">
@@ -142,8 +151,8 @@ export function FetchDisputeForm() {
         e.preventDefault();
         void run("/api/demo/fetch-dispute", { disputeId: id }, (d) => {
           const x = (d.dispute ?? {}) as { id?: string; orderId?: string | null };
-          return `Fetched ${String(x.id ?? "")} (${stateText(d)})${x.orderId ? "" : ". It is not linked to an order in this demo"}. Find it in the disputes inbox.`;
-        });
+          return `Fetched ${String(x.id ?? "")} (${stateText(d)})${x.orderId ? "" : ". It is not linked to an order in this demo"}.`;
+        }, (d) => disputeCaseHref(String((d.dispute as { id?: string } | undefined)?.id ?? "")));
       }}
     >
       <div className="flex flex-wrap gap-2">

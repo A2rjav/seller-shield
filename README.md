@@ -123,7 +123,7 @@ npm run dev              # http://localhost:3000
 Tests, lint, build:
 
 ```bash
-npm test         # vitest, offline, in-memory Postgres: 411 tests in 43 files
+npm test         # vitest, offline, in-memory Postgres: 412 tests in 43 files
 npm run lint
 npm run build
 ```

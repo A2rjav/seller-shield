@@ -7,7 +7,7 @@ import SimulatedTag from "../SimulatedTag";
 
 const when = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
-/** A citation chip. Hover, focus or tap shows the cited evidence item. */
+/** A citation chip. Hover, focus or tap shows the cited evidence item; leaving it or tapping elsewhere hides it. */
 export default function EvidenceChip({ id, item, n }: { id: string; item: EvidenceItem | undefined; n: number }) {
   const [open, setOpen] = useState(false);
   const [alignRight, setAlignRight] = useState(false);
@@ -31,7 +31,8 @@ export default function EvidenceChip({ id, item, n }: { id: string; item: Eviden
     <span ref={ref} className="relative ml-1 inline-flex align-baseline" onMouseEnter={show} onMouseLeave={() => setOpen(false)}>
       <button
         type="button"
-        onClick={() => (open ? setOpen(false) : show())}
+        // Hover and focus already open it, so a click (or a tap, which fires both first) must not toggle it shut.
+        onClick={show}
         onFocus={show}
         onBlur={() => setOpen(false)}
         aria-describedby={open ? tipId : undefined}

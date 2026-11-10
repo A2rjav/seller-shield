@@ -128,3 +128,12 @@ describe("evidence kind labels", () => {
     expect(evidenceKindLabel("new_kind")).toBe("New kind");
   });
 });
+
+describe("disputeCaseHref", () => {
+  it("links a dispute id to its case page, encoded; nothing for an empty id", async () => {
+    const { disputeCaseHref } = await import("@/lib/dashboard/view");
+    expect(disputeCaseHref("PP-R-OQI-10197477")).toBe("/dashboard/disputes/PP-R-OQI-10197477");
+    expect(disputeCaseHref(" SIM-1/2 ")).toBe("/dashboard/disputes/SIM-1%2F2");
+    expect(disputeCaseHref("  ")).toBeUndefined();
+  });
+});

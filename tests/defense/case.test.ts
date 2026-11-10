@@ -190,7 +190,7 @@ describe("caseSummary (deterministic)", () => {
     const s = caseSummary(folder, reqs);
     expect(s).toBe(
       "The buyer says the order never arrived. This response is built from 4 evidence items (2 simulated). " +
-        "Evidence this claim needs that is on file: tracking number, delivery confirmation, paypal ship-to address. Missing: none. " +
+        "Evidence this claim needs that is on file: tracking number, delivery confirmation, PayPal ship-to address. Missing: none. " +
         "Every timeline and argument entry cites the evidence item ids.",
     );
     expect(s).toContain(CITATION_CLAIM);
@@ -199,7 +199,7 @@ describe("caseSummary (deterministic)", () => {
   it("lists what is missing", () => {
     const s = caseSummary(folder.slice(0, 1), reqs);
     expect(s).toContain("built from 1 evidence item.");
-    expect(s).toContain("on file: none. Missing: tracking number, delivery confirmation, paypal ship-to address.");
+    expect(s).toContain("on file: none. Missing: tracking number, delivery confirmation, PayPal ship-to address.");
   });
   it("templateCase uses it", () => {
     expect(templateCase(folder, reqs).summary).toBe(caseSummary(folder, reqs));

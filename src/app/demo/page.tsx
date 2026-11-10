@@ -52,7 +52,8 @@ export default async function DemoPage() {
   const recent = orderRows.slice(0, 15);
   const atRisk = orderRows.find((o) => o.status === "at_risk");
   const openDisputes = disputeRows.filter((d) => isOpenDispute(d.status));
-  const orderLabel = (id: string, buyer: string, cents: number, cur: string) => `${buyer} - ${formatMoney(cents, cur)} - ${id.slice(0, 8)}`;
+  const orderLabel = (id: string, buyer: string, cents: number, cur: string, agent: boolean) =>
+    `${buyer} - ${formatMoney(cents, cur)} - ${id.slice(0, 8)}${agent ? " - AI agent order" : ""}`;
 
   return (
     <div className="space-y-5">
@@ -86,7 +87,7 @@ export default async function DemoPage() {
 
       <Step n={2} title="Let an AI agent buy">
         <p>
-          Fund the agent&apos;s spending mandate in the <Link href="/wallet" className={A}>wallet</Link>, then ask the shopping agent to buy for you in
+          Sign a spending mandate for the agent in the <Link href="/wallet" className={A}>wallet</Link>, then ask the shopping agent to buy for you in
           <Link href="/agent" className={`${A} ml-1`}>the agent chat</Link>. The signed mandate becomes evidence that you authorised the purchase.
         </p>
       </Step>
@@ -112,7 +113,7 @@ export default async function DemoPage() {
 
       <Step n={4} title="Open a dispute">
         <p>Fastest: open a dispute on any order. It is made by the demo, not PayPal, and is tagged <SimulatedTag />.</p>
-        <SimulateDispute orders={recent.map((o) => ({ id: o.id, label: orderLabel(o.id, o.buyer, o.amountCents, o.currency) }))} />
+        <SimulateDispute orders={recent.map((o) => ({ id: o.id, label: orderLabel(o.id, o.buyer, o.amountCents, o.currency, o.source === "agent") }))} />
         <details className="rounded-lg border border-[#efe8da] px-3 py-2">
           <summary className="cursor-pointer text-sm font-medium text-green">Open a real PayPal sandbox dispute</summary>
           <p className="mt-2 text-sm">Takes about five minutes in PayPal&apos;s sandbox site. Buy something in step 1 first, so there is a transaction to dispute.</p>

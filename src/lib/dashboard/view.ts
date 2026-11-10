@@ -96,6 +96,9 @@ export function disputeStatusChip(status: string): Badge {
 
 export const isOpenDispute = (status: string) => status.toUpperCase() !== "RESOLVED";
 
+/** The case page for a dispute id; undefined for an empty id. */
+export const disputeCaseHref = (id: string): string | undefined => (id.trim() ? `/dashboard/disputes/${encodeURIComponent(id.trim())}` : undefined);
+
 export type Countdown = { label: string; urgency: "none" | "ok" | "soon" | "overdue" };
 
 function span(ms: number): string {

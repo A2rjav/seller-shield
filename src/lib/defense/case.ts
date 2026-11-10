@@ -170,7 +170,9 @@ function claimSentence(plain: string): string {
   return `${s}.`;
 }
 
-const kindList = (kinds: EvidenceKind[]) => (kinds.length ? kinds.map((k) => evidenceKindLabel(k).toLowerCase()).join(", ") : "none");
+/** Lower-cases a label for mid-sentence use, keeping the brand name "PayPal" as written. */
+const midSentence = (label: string) => label.toLowerCase().replace(/\bpaypal\b/g, "PayPal");
+const kindList = (kinds: EvidenceKind[]) => (kinds.length ? kinds.map((k) => midSentence(evidenceKindLabel(k))).join(", ") : "none");
 
 /** Built in code from the reason, the evidence coverage and counts. No AI text, no amounts, dates or ids. */
 export function caseSummary(folder: EvidenceItem[], requirements: Requirements): string {

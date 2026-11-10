@@ -131,7 +131,9 @@ export default function CaseWorkspace({ dispute, built, priorAction, coverage, f
       {submitted ? (
         <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-900">
           <Icon name="shieldCheck" className="h-4 w-4 shrink-0" />
-          Evidence submitted {stamp.format(new Date(built!.submittedAt!))}. PayPal will review it.
+          {dispute.simulated
+            ? `Evidence recorded ${stamp.format(new Date(built!.submittedAt!))} (Simulated dispute: nothing was sent to PayPal).`
+            : `Evidence submitted ${stamp.format(new Date(built!.submittedAt!))}. PayPal will review it.`}
         </div>
       ) : null}
 
