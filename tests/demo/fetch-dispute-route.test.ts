@@ -133,6 +133,15 @@ describe("POST /api/demo/fetch-dispute", () => {
       expect((await post({ disputeId: "PP-R-CAP-11" })).status).toBe(200);
     });
 
+    it("does not grow demo_state: 30 distinct ids beyond the global cap leave at most cap-many fetch rows, and old rows are pruned", async () => {
+      for (let i = 1; i <= 40; i++) await post({ disputeId: `PP-R-GROW-${i}` });
+      const rows = await holder.db.select().from(demoState);
+      expect(rows.filter((r) => r.key.startsWith("fetch:")).length).toBeLessThanOrEqual(10);
+      await holder.db.update(demoState).set({ updatedAt: sql`now() - interval '2 hours'` }).where(eq(demoState.key, "fetch:PP-R-GROW-1"));
+      await post({ disputeId: "PP-R-GROW-99" });
+      expect(await holder.db.select().from(demoState).where(eq(demoState.key, "fetch:PP-R-GROW-1"))).toHaveLength(0);
+    });
+
     it("does not count malformed bodies or throttled repeats against the cap", async () => {
       await post({ disputeId: "bad" });
       for (let i = 0; i < 5; i++) await post({ disputeId: "PP-R-SAME-1" });

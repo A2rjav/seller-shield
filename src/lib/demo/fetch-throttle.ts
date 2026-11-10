@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import type { Db } from "@/lib/db/client";
 import { demoState } from "@/lib/db/schema";
 
@@ -11,18 +11,24 @@ export type FetchClaim = { ok: true } | { ok: false; retryAfterSec: number };
 
 const secondsLeft = (expr: ReturnType<typeof sql>) => sql<string>`extract(epoch from (${expr}))`;
 
-async function claimDispute(db: Db, id: string): Promise<boolean> {
+/** Returns null when throttled, else whether this request inserted the row (the insert marks it `{fresh:true}`, an update clears the mark). */
+async function claimDispute(db: Db, id: string): Promise<{ inserted: boolean } | null> {
   const rows = await db
     .insert(demoState)
-    .values({ key: disputeKey(id), value: {} })
+    .values({ key: disputeKey(id), value: { fresh: true } })
     .onConflictDoUpdate({
       target: demoState.key,
-      set: { updatedAt: sql`now()` },
+      set: { updatedAt: sql`now()`, value: {} },
       setWhere: sql`${demoState.updatedAt} < now() - make_interval(secs => ${FETCH_PER_DISPUTE_SEC})`,
     })
-    .returning({ key: demoState.key });
-  return rows.length > 0;
+    .returning({ value: demoState.value });
+  if (!rows.length) return null;
+  return { inserted: (rows[0].value as { fresh?: boolean } | null)?.fresh === true };
 }
+
+/** Per-id rows are only needed for 15 s; drop old ones so anonymous callers cannot grow the table. */
+const pruneStale = (db: Db) =>
+  db.delete(demoState).where(and(like(demoState.key, "fetch:%"), sql`${demoState.updatedAt} < now() - interval '1 hour'`));
 
 /** Fixed one-minute window counter in one row: the update only applies while the window is expired or under the cap. */
 async function claimGlobal(db: Db): Promise<boolean> {
@@ -55,12 +61,16 @@ async function leftSec(db: Db, key: string, intervalSql: ReturnType<typeof sql>)
  * minute overall. Holds across instances because every claim is one INSERT ... ON CONFLICT DO UPDATE ... WHERE.
  */
 export async function claimDisputeFetch(db: Db, id: string): Promise<FetchClaim> {
-  if (!(await claimDispute(db, id))) {
+  await pruneStale(db).catch(() => {});
+  const claimed = await claimDispute(db, id);
+  if (!claimed) {
     return { ok: false, retryAfterSec: await leftSec(db, disputeKey(id), sql`make_interval(secs => ${FETCH_PER_DISPUTE_SEC})`) };
   }
   if (!(await claimGlobal(db))) {
     // The global cap refused: do not make this dispute id wait out its own 15 s for a fetch that never happened.
-    await db.update(demoState).set({ updatedAt: sql`now() - interval '1 day'` }).where(eq(demoState.key, disputeKey(id)));
+    // A row this request inserted is removed; one that pre-existed was already past its 15 s, so it is marked expired again.
+    if (claimed.inserted) await db.delete(demoState).where(eq(demoState.key, disputeKey(id)));
+    else await db.update(demoState).set({ updatedAt: sql`now() - interval '1 day'` }).where(eq(demoState.key, disputeKey(id)));
     return { ok: false, retryAfterSec: await leftSec(db, WINDOW_KEY, sql`interval '1 minute'`) };
   }
   return { ok: true };
