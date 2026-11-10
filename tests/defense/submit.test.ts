@@ -140,6 +140,38 @@ describe("submitCase", () => {
     expect(row.submittedAt).toBeInstanceOf(Date);
   });
 
+  it("a dispute under PayPal review (only provide_supporting_info allowed) gets the case as supporting info", async () => {
+    const { db, deps } = await setup(false);
+    await buildCase(db, "D1", { deps });
+    const api = { ...paypal(), provideSupportingInfo: vi.fn(async () => {}) };
+    const review = { ...fresh, status: "UNDER_REVIEW", dispute_life_cycle_stage: "CHARGEBACK", links: [{ rel: "self" }, { rel: "provide_supporting_info" }] };
+    api.getDispute.mockResolvedValue(review);
+    const r = await submitCase(db, "D1", { sellerConfirmed: true }, { api });
+    expect(r).toMatchObject({ submitted: true });
+    expect(api.provideEvidence).not.toHaveBeenCalled();
+    expect(api.provideSupportingInfo).toHaveBeenCalledTimes(1);
+    const [id, arg] = api.provideSupportingInfo.mock.calls[0] as unknown as [string, { notes: string; pdf: Uint8Array }];
+    const [built] = await db.select().from(cases);
+    expect(id).toBe("D1");
+    expect(arg.notes).toBe(caseNotes(built.draft as CaseDraft));
+    expect(arg.pdf).toBeInstanceOf(Uint8Array);
+    expect(built.submitResult).toEqual({ action: "supporting_info" });
+  });
+
+  it("refuses without calling PayPal when PayPal allows no document action, so the seller can retry later", async () => {
+    const { db, deps } = await setup(false);
+    await buildCase(db, "D1", { deps });
+    const api = { ...paypal(), provideSupportingInfo: vi.fn(async () => {}) };
+    api.getDispute.mockResolvedValue({ ...fresh, links: [{ rel: "self" }] });
+    const r = await submitCase(db, "D1", { sellerConfirmed: true }, { api });
+    expect(r.submitted).toBe(false);
+    expect(r.error).toMatch(/not accepting documents.*under review.*nothing was sent/i);
+    expect(api.provideEvidence).not.toHaveBeenCalled();
+    expect(api.provideSupportingInfo).not.toHaveBeenCalled();
+    const [row] = await db.select().from(cases);
+    expect(row.submittedAt).toBeNull();
+  });
+
   it("refuses with no case, an invalid draft, or a resolved dispute", async () => {
     const { db, deps } = await setup(false);
     const api = paypal();

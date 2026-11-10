@@ -70,7 +70,7 @@ Stack: Next.js 15 (App Router), TypeScript, Tailwind, AG Grid (orders and disput
 | OAuth | `POST /v1/oauth2/token` | `src/lib/paypal/client.ts` |
 | Orders v2 | `POST /v2/checkout/orders` (with `custom_id`), `POST .../{id}/capture`, `GET .../{id}` | `src/lib/paypal/orders.ts` |
 | Orders v2 tracking | `POST /v2/checkout/orders/{id}/track` | `src/lib/paypal/tracking.ts` |
-| Disputes v1 | `GET /v1/customer/disputes`, `GET .../{id}`, `provide-evidence`, `make-offer`, `accept-claim`, `send-message`; sandbox-only `require-evidence`, `adjudicate` | `src/lib/paypal/disputes.ts` |
+| Disputes v1 | `GET /v1/customer/disputes`, `GET .../{id}`, `provide-evidence`, `provide-supporting-info` (while PayPal reviews a case), `make-offer`, `accept-claim`, `send-message`; sandbox-only `require-evidence`, `adjudicate` | `src/lib/paypal/disputes.ts` |
 | Webhooks | `POST /v1/notifications/verify-webhook-signature`; receiver at `/api/webhooks/paypal`; registration helper | `src/lib/paypal/webhooks.ts`, `src/app/api/webhooks/paypal/route.ts`, `scripts/register-webhook.ts` |
 | JavaScript SDK | `paypal.com/sdk/js` Buttons for human checkout | `src/components/PayPalButton.tsx` |
 | Agent Toolkit | `@paypal/agent-toolkit`, read-only tools `get_dispute`, `get_order`, `get_shipment_tracking` | `src/lib/defense/toolkit-gather.ts` |
@@ -123,7 +123,7 @@ npm run dev              # http://localhost:3000
 Tests, lint, build:
 
 ```bash
-npm test         # vitest, offline, in-memory Postgres: 412 tests in 43 files
+npm test         # vitest, offline, in-memory Postgres: 416 tests in 43 files
 npm run lint
 npm run build
 ```

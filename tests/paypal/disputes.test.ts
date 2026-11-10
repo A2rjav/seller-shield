@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPaypalClient } from "@/lib/paypal/client";
-import { createDisputesApi, disputeAmount } from "@/lib/paypal/disputes";
+import { createDisputesApi, disputeAmount, evidenceRoute } from "@/lib/paypal/disputes";
 import { config, fakeFetch, json } from "./helpers";
 
 function setup(reply: unknown = {}) {
@@ -73,6 +73,29 @@ describe("disputes api request shapes", () => {
     const file = form.get("evidence.pdf") as File;
     expect(file.type).toBe("application/pdf");
     expect(file.size).toBe(3);
+  });
+
+  it("provideSupportingInfo posts multipart notes plus the pdf, with an idempotency id", async () => {
+    const { api, last } = setup({});
+    await api.provideSupportingInfo("PP-R-1", { notes: "n", pdf: new Uint8Array([1, 2, 3, 4]) });
+    const c = last();
+    expect(c.url).toMatch(/\/v1\/customer\/disputes\/PP-R-1\/provide-supporting-info$/);
+    expect(c.init.method).toBe("POST");
+    expect(c.init.headers["PayPal-Request-Id"]).toBeTruthy();
+    const form = c.init.body as FormData;
+    expect(JSON.parse(await (form.get("input") as Blob).text())).toEqual({ notes: "n" });
+    const file = form.get("evidence.pdf") as File;
+    expect(file.type).toBe("application/pdf");
+    expect(file.size).toBe(4);
+  });
+
+  it("evidenceRoute reads the seller actions PayPal allows from the dispute links", () => {
+    const l = (...rels: string[]) => ({ links: rels.map((rel) => ({ rel })) });
+    expect(evidenceRoute(l("self", "provide_evidence", "accept_claim"))).toBe("evidence");
+    expect(evidenceRoute(l("self", "provide_supporting_info"))).toBe("supporting_info"); // live 2026-11-10, under PayPal review
+    expect(evidenceRoute(l("self"))).toBe("none");
+    expect(evidenceRoute({})).toBe("unknown");
+    expect(evidenceRoute(null)).toBe("unknown");
   });
 
   it("makeOffer sends a REFUND offer with a PayPal amount string", async () => {

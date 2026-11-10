@@ -121,12 +121,17 @@ export default async function DemoPage() {
             <li>Log in at <a className={A} href="https://www.sandbox.paypal.com/signin" target="_blank" rel="noreferrer">sandbox.paypal.com/signin</a> as the sandbox test buyer from step 1.</li>
             <li>Open the <a className={A} href="https://www.sandbox.paypal.com/resolutioncenter/" target="_blank" rel="noreferrer">Resolution Center</a> (it opens &quot;Report an issue with a purchase&quot;). The shop shows as &quot;Test Store&quot; there.</li>
             <li>Pick the transaction and click <strong>Report a Problem</strong>, then choose <strong>I haven&apos;t received the item or service</strong> (or <strong>Unauthorized activity</strong> for the &quot;my AI bought it&quot; story).</li>
+            <li>Describe the problem in a sentence when PayPal asks for more detail.</li>
             <li>Select the item, set Item type to <strong>Physical product</strong> and Category to <strong>Jewelry</strong>.</li>
             <li>For item not received, choose <strong>The item hasn&apos;t reached me or I refused delivery</strong>.</li>
             <li>Enter the refund you expect (for example the order total), answer <strong>No</strong> to &quot;Have you contacted the seller?&quot;, and add a short note.</li>
             <li>Review and <strong>Submit</strong>. PayPal shows a Case ID such as PP-R-ABC-12345678: copy it.</li>
           </ol>
           <p className="mt-3 text-sm">Fetched disputes can take a few minutes to appear in PayPal&apos;s list; paste the ID PayPal shows the buyer to fetch it now.</p>
+          <p className="mt-2 text-xs text-muted">
+            In our tests (Nov 10) the sandbox moved a new case into PayPal review within about three minutes. While PayPal reviews a case it takes the
+            seller&apos;s documents as supporting information, and Seller Shield sends the case that way.
+          </p>
           <div className="mt-2"><FetchDisputeForm /></div>
           <p className="mt-3 text-xs text-muted">Or check PayPal&apos;s dispute list (new disputes usually show up there after 3 to 6 minutes):</p>
           <div className="mt-2"><PollButton /></div>

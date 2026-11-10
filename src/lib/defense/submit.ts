@@ -9,7 +9,8 @@ import { caseNotes, validateClaims, type CaseDraft } from "./case";
 import { offerBlockedReason } from "@/lib/dashboard/view";
 
 export type SubmitResult = { submitted: boolean; simulated?: boolean; paypalStatus?: string; error?: string };
-export type SubmitApi = Pick<typeof paypalDisputes, "provideEvidence" | "makeOffer" | "acceptClaim" | "getDispute">;
+export type SubmitApi = Pick<typeof paypalDisputes, "provideEvidence" | "makeOffer" | "acceptClaim" | "getDispute"> &
+  Partial<Pick<typeof paypalDisputes, "provideSupportingInfo">>;
 type Deps = { api?: SubmitApi };
 
 const DEFAULT_ACCEPT_NOTE = "I accept this claim and will refund the buyer.";
@@ -89,12 +90,32 @@ export async function submitCase(db: Db, disputeId: string, body: unknown, deps:
     const draft = row.draft as CaseDraft;
     const notes = caseNotes(draft);
     const evidenceType = REASON_REQUIREMENTS[resolveReason(dispute.reason)].paypalEvidenceType;
+    // Ask PayPal which action it allows now: a case under PayPal review takes supporting info, not evidence.
+    let route: paypalDisputes.EvidenceRoute = "unknown";
+    let liveStatus = dispute.status;
     try {
-      await api.provideEvidence(disputeId, { notes, evidenceType, pdf: row.pdfBytes });
+      const live = await api.getDispute(disputeId);
+      route = paypalDisputes.evidenceRoute(live);
+      liveStatus = live.status ?? liveStatus;
+    } catch {
+      route = "unknown"; // PayPal unreachable for the read: try provide-evidence as before
+    }
+    if (route === "none") {
+      return refuse(
+        `PayPal is not accepting documents on this dispute right now (PayPal status: ${liveStatus.toLowerCase().replace(/_/g, " ")}). Refresh it from PayPal later; nothing was sent.`,
+      );
+    }
+    const asSupportingInfo = route === "supporting_info" && !!api.provideSupportingInfo;
+    try {
+      if (asSupportingInfo) await api.provideSupportingInfo!(disputeId, { notes, pdf: row.pdfBytes });
+      else await api.provideEvidence(disputeId, { notes, evidenceType, pdf: row.pdfBytes });
     } catch (err) {
       return refuse(`PayPal rejected the submission: ${err instanceof Error ? err.message : "error"}`);
     }
-    await db.update(cases).set({ submittedAt: new Date(), submitResult: { action: "evidence", evidenceType } }).where(eq(cases.id, row.id));
+    await db
+      .update(cases)
+      .set({ submittedAt: new Date(), submitResult: asSupportingInfo ? { action: "supporting_info" } : { action: "evidence", evidenceType } })
+      .where(eq(cases.id, row.id));
     return { submitted: true, paypalStatus: await tryRefresh(db, api, disputeId) };
   });
 }

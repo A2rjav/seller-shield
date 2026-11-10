@@ -16,6 +16,7 @@ import { DISPUTE_FEE_CENTS } from "@/lib/defense/recommend";
 import { buildEvidenceFolder } from "@/lib/evidence/folder";
 import { coverage, REASON_REQUIREMENTS } from "@/lib/evidence/requirements";
 import { formatMoney } from "@/lib/format";
+import { evidenceRoute, type PaypalDispute } from "@/lib/paypal/disputes";
 
 export const dynamic = "force-dynamic";
 
@@ -121,6 +122,7 @@ export default async function CasePage({ params }: { params: Promise<{ id: strin
           resolved: !open,
           evidenceType: req.paypalEvidenceType,
           stage: dispute.stage,
+          evidenceRoute: dispute.simulated ? "evidence" : evidenceRoute(dispute.raw as PaypalDispute | null),
         }}
         built={built}
         priorAction={prior?.action ?? null}

@@ -14,7 +14,24 @@ export type PaypalDispute = {
   seller_response_due_date?: string;
   dispute_outcome?: { outcome_code?: string };
   messages?: { posted_by: "BUYER" | "SELLER" | "ARBITER"; time_posted: string; content: string }[];
+  /** HATEOAS links: the actions PayPal allows the seller right now (provide_evidence, provide_supporting_info, ...). */
+  links?: { rel?: string; href?: string; method?: string }[];
 };
+
+/**
+ * How the seller's documents can reach PayPal right now, from the dispute's links. Live 2026-11-10: a new
+ * item-not-received case moved to stage CHARGEBACK / UNDER_PAYPAL_REVIEW about 3 minutes after the buyer filed it,
+ * with only `provide_supporting_info` allowed, so provide-evidence would be refused.
+ * "unknown" when PayPal sent no links (list items, older rows): callers keep the provide-evidence default.
+ */
+export type EvidenceRoute = "evidence" | "supporting_info" | "none" | "unknown";
+export function evidenceRoute(d: Pick<PaypalDispute, "links"> | null | undefined): EvidenceRoute {
+  const rels = d?.links?.map((l) => l.rel);
+  if (!rels || rels.length === 0) return "unknown";
+  if (rels.includes("provide_evidence")) return "evidence";
+  if (rels.includes("provide_supporting_info")) return "supporting_info";
+  return "none";
+}
 
 export function disputeAmount(d: Pick<PaypalDispute, "dispute_amount">): { amountCents: number; currency: string } {
   return { amountCents: toCents(d.dispute_amount.value), currency: d.dispute_amount.currency_code };
@@ -71,6 +88,15 @@ export function createDisputesApi(client: Pick<PaypalClient, "paypalFetch">) {
     await f<unknown>(`${base(id)}/provide-evidence`, { method: "POST", multipart: form, requestId: `evidence-${id}-${input.evidenceType}` });
   }
 
+  /** While PayPal reviews a claim: multipart `input` JSON with the notes, plus the evidence PDF as a document part. */
+  async function provideSupportingInfo(id: string, input: { notes: string; pdf: Uint8Array }): Promise<void> {
+    const name = "evidence.pdf";
+    const form = new FormData();
+    form.append("input", new Blob([JSON.stringify({ notes: input.notes })], { type: "application/json" }), "input.json");
+    form.append(name, new Blob([input.pdf as BlobPart], { type: "application/pdf" }), name);
+    await f<unknown>(`${base(id)}/provide-supporting-info`, { method: "POST", multipart: form, requestId: `supporting-${id}` });
+  }
+
   async function makeOffer(id: string, input: { amountCents: number; currency: string; note: string }): Promise<void> {
     await f<unknown>(`${base(id)}/make-offer`, {
       method: "POST",
@@ -96,13 +122,14 @@ export function createDisputesApi(client: Pick<PaypalClient, "paypalFetch">) {
     await f<unknown>(`${base(id)}/adjudicate`, { method: "POST", body: { adjudication_outcome: outcome } });
   }
 
-  return { listDisputes, getDispute, provideEvidence, makeOffer, acceptClaim, sendMessage, requireEvidence, adjudicate };
+  return { listDisputes, getDispute, provideEvidence, provideSupportingInfo, makeOffer, acceptClaim, sendMessage, requireEvidence, adjudicate };
 }
 
 const api = createDisputesApi({ paypalFetch });
 export const listDisputes = api.listDisputes;
 export const getDispute = api.getDispute;
 export const provideEvidence = api.provideEvidence;
+export const provideSupportingInfo = api.provideSupportingInfo;
 export const makeOffer = api.makeOffer;
 export const acceptClaim = api.acceptClaim;
 export const sendMessage = api.sendMessage;

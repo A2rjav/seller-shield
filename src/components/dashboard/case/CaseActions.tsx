@@ -29,6 +29,7 @@ export default function CaseActions({
   notesPreview,
   evidenceType,
   evidenceCount,
+  asSupportingInfo = false,
   onDone,
 }: {
   disputeId: string;
@@ -44,6 +45,8 @@ export default function CaseActions({
   notesPreview: string;
   evidenceType: string;
   evidenceCount: number;
+  /** PayPal is reviewing the claim and takes supporting information instead of a formal evidence response. */
+  asSupportingInfo?: boolean;
   onDone: (n: ActionNotice) => void;
 }) {
   const [open, setOpen] = useState<Kind | null>(null);
@@ -137,7 +140,11 @@ export default function CaseActions({
       >
         <p>{intro}</p>
         <ul className="list-disc space-y-1 pl-5">
-          <li>Evidence type: <span className="font-mono text-xs">{evidenceType}</span></li>
+          {asSupportingInfo ? (
+            <li>Sent as supporting information: PayPal is reviewing this claim, so it takes documents rather than a formal evidence response</li>
+          ) : (
+            <li>Evidence type: <span className="font-mono text-xs">{evidenceType}</span></li>
+          )}
           <li>The evidence PDF with {evidenceCount} cited records (as previewed on this page)</li>
           <li>Your notes:</li>
         </ul>

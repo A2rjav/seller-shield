@@ -12,6 +12,7 @@ import Panel from "../Panel";
 import Skeleton from "../Skeleton";
 import CaseActions, { type ActionNotice } from "./CaseActions";
 import CaseDraftView from "./CaseDraftView";
+import type { EvidenceRoute } from "@/lib/paypal/disputes";
 import CoverageChecklist from "./CoverageChecklist";
 import RecommendationCard from "./RecommendationCard";
 
@@ -24,7 +25,17 @@ export type BuiltCase = {
 };
 
 export type CaseWorkspaceProps = {
-  dispute: { id: string; amountCents: number; currency: string; simulated: boolean; resolved: boolean; evidenceType: string; stage: string };
+  dispute: {
+    id: string;
+    amountCents: number;
+    currency: string;
+    simulated: boolean;
+    resolved: boolean;
+    evidenceType: string;
+    stage: string;
+    /** From the last PayPal read of this dispute: how documents can reach PayPal now. */
+    evidenceRoute?: EvidenceRoute;
+  };
   built: BuiltCase | null;
   priorAction: string | null;
   coverage: { have: string[]; missing: string[]; score: number };
@@ -205,7 +216,16 @@ export default function CaseWorkspace({ dispute, built, priorAction, coverage, f
             currency={dispute.currency}
             offerCents={built?.recommendation.offerCents ?? Math.round(dispute.amountCents / 2)}
             offerBlockedReason={offerBlockedReason(dispute.stage)}
-            submitBlockedReason={!built ? "Build the case first." : submitted ? "Evidence already submitted." : null}
+            submitBlockedReason={
+              !built
+                ? "Build the case first."
+                : submitted
+                  ? "Evidence already submitted."
+                  : dispute.evidenceRoute === "none"
+                    ? "PayPal is not accepting documents on this dispute right now. Refresh its status from PayPal on the demo guide."
+                    : null
+            }
+            asSupportingInfo={dispute.evidenceRoute === "supporting_info"}
             priorAction={priorAction}
             notesPreview={notes}
             evidenceType={dispute.evidenceType}
