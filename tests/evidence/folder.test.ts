@@ -96,6 +96,7 @@ describe("buildEvidenceFolder", () => {
     expect(d.source).toBe("demo_carrier");
     expect(d.summary).toBe("Delivered 2026-11-09 to Portland, OR 97214 (USPS 9400111)");
     expect(f.find((i) => i.kind === "tracking")!.summary).toContain("pushed to PayPal 2026-11-06");
+    expect(f.find((i) => i.kind === "tracking")!.summary).toMatch(/, status (label created|in transit|delivered);/);
   });
 
   it("orderId null -> only paypal-sourced items", async () => {

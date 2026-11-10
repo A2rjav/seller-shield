@@ -21,6 +21,8 @@ export type EvidenceItem = {
 type Addr = { line1?: string; line2?: string; city?: string; state?: string; postalCode?: string; countryCode?: string };
 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+/** Shipment status as words for evidence summaries (the stored values are enum codes). */
+export const SHIP_STATUS: Record<string, string> = { label: "label created", in_transit: "in transit", delivered: "delivered" };
 const day = (d: Date | string | null | undefined) => {
   if (!d) return null;
   const t = new Date(d);
@@ -111,7 +113,7 @@ async function addOrderItems(db: Db, orderId: string, items: EvidenceItem[]) {
     items.push({
       id: `ev:tracking:${s.id}`, kind: "tracking", title: "Tracking", at: iso(s.pushedAt ?? o.createdAt), source,
       simulated: s.simulated || (s.pushedToPaypal && s.pushSimulated),
-      summary: `${s.carrier} tracking ${s.trackingNumber}, status ${s.status}; ${pushed}`,
+      summary: `${s.carrier} tracking ${s.trackingNumber}, status ${SHIP_STATUS[s.status] ?? s.status}; ${pushed}`,
       data: { shipmentId: s.id, carrier: s.carrier, trackingNumber: s.trackingNumber, status: s.status, pushedToPaypal: s.pushedToPaypal, pushSimulated: s.pushSimulated, pushedAt: iso(s.pushedAt), signatureRequired: s.signatureRequired },
     });
     if (s.status === "delivered" && s.deliveredAt) {
