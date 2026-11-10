@@ -2,7 +2,7 @@
 
 - Date: 2026-11-10 (05:44-07:00 UTC)
 - URL: https://seller-shield-id5n.onrender.com (Render free plan, auto-deploys `main`)
-- Started on commit `94ed45c`; ended on `6a44fbd` plus this record (fix commits below were pushed to `build/seller-shield` and `main` during the run, and each step after a fix was re-run on the redeployed app)
+- Started on commit `94ed45c`; ended on `47041f2` plus this record (fix commits below were pushed to `build/seller-shield` and `main` during the run, and each step after a fix was re-run on the redeployed app)
 - Browser: Playwright (Chrome) at 1280 px and 375 px for every app page; screenshots in `D:\Hackathons\Paypal\.playwright-mcp\e2e\` (outside the repo)
 - Sandbox only. The buyer password and API keys are not written here.
 
@@ -107,6 +107,7 @@
 | `720c821` | Citation chip click/tap closed its own tooltip; simulated case said "PayPal will review it"; "paypal payer approval" casing; `/demo` results link to the case page; agent orders marked in the dispute picker; step 2 said "fund" instead of "sign". |
 | `3c59167` | Real disputes under PayPal review only allow `provide_supporting_info`; submit now picks the allowed action from the dispute links (supporting info, evidence, or a clear refusal with nothing sent); modal says which. `/demo` buyer steps updated for PayPal's new "describe the problem" step. |
 | `6a44fbd` | Evidence summary printed the enum ("status label"); now "label created" / "in transit". |
+| `47041f2` | A 503 "overloaded" from a Gemini model now moves to the next fallback model (blocked ~30 s) instead of failing the call; Accept claim is disabled with a reason while PayPal reviews a real dispute (and refused server-side without an accept-claim link); the case page reads the dispute fresh from PayPal to pick the submit route. |
 
 Every fix: `npm test` (416 tests), `npx tsc --noEmit`, `npm run lint`, `npm run build` passed before the push to `build/seller-shield` and `main`.
 
