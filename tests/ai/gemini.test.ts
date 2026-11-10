@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { NoObjectGeneratedError, TypeValidationError } from "ai";
-import { createAi, createDbUsageStore, generationOptions, pickModel, resolveModel, utcDay, type UsageStore } from "@/lib/ai/gemini";
+import { availableModels, createAi, createDbUsageStore, generateWithFallback, generationOptions, noteModelFailure, parseRetryDelayMs, pickFallbacks, pickModel, resolveModel, utcDay, type UsageStore } from "@/lib/ai/gemini";
 import { getAiConfig } from "@/lib/env";
 import { createTestDb } from "../helpers/testDb";
 
@@ -257,5 +257,64 @@ describe("getAiConfig", () => {
   });
   it("requires the key and names it without values", () => {
     expect(() => getAiConfig({})).toThrow(/GEMINI_API_KEY/);
+  });
+});
+
+describe("model fallback on quota (live 2026-11-10: 20 free-tier requests per day per model)", () => {
+  const quota429 = Object.assign(new Error("You exceeded your current quota. Please retry in 2h4m10.5s."), { statusCode: 429 });
+
+  it("pickFallbacks lists the newest stable flash-lite models other than the primary", () => {
+    const models = [m("gemini-3.5-flash"), m("gemini-3.5-flash-lite"), m("gemini-3.1-flash-lite"), m("gemini-2.5-flash-lite"), m("gemini-3.1-flash-lite-preview"), m("gemini-flash-lite-latest")];
+    expect(pickFallbacks(models, "gemini-3.5-flash")).toEqual(["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]);
+    expect(pickFallbacks(models, "gemini-3.5-flash-lite", 5)).toEqual(["gemini-3.1-flash-lite", "gemini-2.5-flash-lite"]);
+    expect(pickFallbacks([m("gemini-3.5-flash")], "gemini-3.5-flash")).toEqual([]);
+  });
+
+  it("parseRetryDelayMs reads Gemini's retry hints", () => {
+    expect(parseRetryDelayMs("Please retry in 2h4m10.5s.")).toBe((2 * 3600 + 4 * 60 + 10.5) * 1000);
+    expect(parseRetryDelayMs("Please retry in 37.2s")).toBe(37200);
+    expect(parseRetryDelayMs('"retryDelay": "7450s"')).toBe(7450000);
+    expect(parseRetryDelayMs("nothing here")).toBeUndefined();
+  });
+
+  it("noteModelFailure blocks a model on 429 until Gemini's retry time and on 404 for a day; other errors are not noted", () => {
+    const blocked = new Map<string, number>();
+    expect(noteModelFailure("a", quota429, 1000, blocked)).toBe(true);
+    expect(blocked.get("a")).toBe(1000 + (2 * 3600 + 4 * 60 + 10.5) * 1000);
+    expect(noteModelFailure("b", Object.assign(new Error("not found"), { statusCode: 404 }), 0, blocked)).toBe(true);
+    expect(blocked.get("b")).toBe(24 * 3600_000);
+    expect(noteModelFailure("c", Object.assign(new Error("overloaded"), { statusCode: 503 }), 0, blocked)).toBe(false);
+    expect(noteModelFailure("d", new Error("boom"), 0, blocked)).toBe(false);
+    expect(noteModelFailure("", quota429, 0, blocked)).toBe(false);
+    expect(blocked.has("c") || blocked.has("d")).toBe(false);
+  });
+
+  it("availableModels skips blocked models until they reopen, and keeps the primary when all are blocked", () => {
+    const blocked = new Map([["p", 5000]]);
+    expect(availableModels(["p", "f1", "f1", "f2"], 1000, blocked)).toEqual(["f1", "f2"]);
+    expect(availableModels(["p", "f1"], 6000, blocked)).toEqual(["p", "f1"]);
+    blocked.set("f1", 5000);
+    expect(availableModels(["p", "f1"], 1000, blocked)).toEqual(["p"]);
+  });
+
+  it("generateWithFallback moves to the next model on a noted failure and throws other errors at once", async () => {
+    const blocked = new Map<string, number>();
+    const note = (id: string, e: unknown) => noteModelFailure(id, e, 0, blocked);
+    const call = vi.fn(async (id: string) => {
+      if (id === "p") throw quota429;
+      return `ok:${id}`;
+    });
+    expect(await generateWithFallback(["p", "f1"], call, note)).toBe("ok:f1");
+    expect(blocked.has("p")).toBe(true);
+    await expect(generateWithFallback(["p"], call, note)).rejects.toBe(quota429);
+    const boom = new Error("boom");
+    const other = vi.fn(async () => { throw boom; });
+    await expect(generateWithFallback(["x", "y"], other, note)).rejects.toBe(boom);
+    expect(other).toHaveBeenCalledTimes(1);
+  });
+
+  it("getAiConfig reads GEMINI_MODEL_FALLBACKS as a list", () => {
+    expect(getAiConfig({ GEMINI_API_KEY: "k", GEMINI_MODEL_FALLBACKS: " a, b ,," }).modelFallbacks).toEqual(["a", "b"]);
+    expect(getAiConfig({ GEMINI_API_KEY: "k", GEMINI_MODEL_FALLBACKS: "" }).modelFallbacks).toBeUndefined();
   });
 });

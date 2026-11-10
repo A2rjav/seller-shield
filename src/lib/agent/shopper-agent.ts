@@ -1,6 +1,6 @@
 import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
-import { getGeminiModel, isOverloaded, OVERLOAD_RETRY_MS, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
+import { getGeminiModel, isOverloaded, modelIdOf, noteModelFailure, OVERLOAD_RETRY_MS, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
 import { getProduct, products } from "@/lib/catalog";
 import type { Db } from "@/lib/db/client";
 import { formatMoney } from "@/lib/format";
@@ -108,6 +108,8 @@ export type ChatDeps = AgentDeps & {
   consume?: () => Promise<boolean>;
   loadModel?: () => Promise<unknown>;
   sleep?: (ms: number) => Promise<void>;
+  /** Records a 429/404 so the next loadModel picks a fallback model; true when switching models may help. */
+  noteFailure?: (modelId: string, err: unknown) => boolean;
 };
 
 /** Gemini tool loop. Every model step consumes one slot of the daily AI cap; a refusal on the first step means the AI is unavailable. */
@@ -119,7 +121,9 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
   const consume = deps.consume ?? tryConsumeAiCall;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   try {
-    const model = await (deps.loadModel ?? (() => getGeminiModel("fast")))();
+    const load = deps.loadModel ?? (() => getGeminiModel("fast"));
+    const note = deps.noteFailure ?? ((id: string, e: unknown) => noteModelFailure(id, e));
+    let model = await load();
     const loop = () => generateText({
       model,
       ...TOOL_LOOP_OPTIONS,
@@ -140,10 +144,13 @@ export async function runShopperChat(input: { db: Db; shopperJws: string; messag
     try {
       result = await loop();
     } catch (err) {
-      // The free Gemini tier often answers 503 "high demand". Retry the loop once, only while nothing has happened yet
-      // (no checkout or refusal), so a retry can never place a second order. Every step still takes a cap slot.
-      if (events.length > 0 || !isOverloaded(err)) throw err;
-      await sleep(OVERLOAD_RETRY_MS);
+      // The free Gemini tier often answers 503 "high demand", or 429 once a model's daily quota is spent. Retry the loop
+      // once (after a pause on 503; on the next fallback model on 429/404), only while nothing has happened yet (no
+      // checkout or refusal), so a retry can never place a second order. Every step still takes a cap slot.
+      if (events.length > 0) throw err;
+      if (isOverloaded(err)) await sleep(OVERLOAD_RETRY_MS);
+      else if (note(modelIdOf(model), err)) model = await load();
+      else throw err;
       result = await loop();
     }
     if (!result.text.trim() && events.length === 0) return { aiUnavailable: true };

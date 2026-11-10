@@ -63,12 +63,14 @@ export function getPaypalConfig(source: Record<string, string | undefined> = pro
   return { clientId: d.PAYPAL_CLIENT_ID, clientSecret: d.PAYPAL_CLIENT_SECRET, apiBase: url.origin };
 }
 
-export type AiConfig = { apiKey: string; model?: string; modelFast?: string; dailyLimit: number };
+/** modelFallbacks: GEMINI_MODEL_FALLBACKS, comma separated; undefined when unset (the app then picks fallbacks from the model list). */
+export type AiConfig = { apiKey: string; model?: string; modelFast?: string; modelFallbacks?: string[]; dailyLimit: number };
 
 const aiSchema = z.object({
   GEMINI_API_KEY: req,
   GEMINI_MODEL: opt,
   GEMINI_MODEL_FAST: opt,
+  GEMINI_MODEL_FALLBACKS: opt,
   AI_DAILY_CALL_LIMIT: z.preprocess(blank, z.coerce.number().int().positive().default(300)),
 });
 
@@ -80,7 +82,14 @@ export function getAiConfig(source: Record<string, string | undefined> = process
     throw new Error(`Invalid or missing environment variables: ${keys.join(", ")}`);
   }
   const d = parsed.data;
-  return { apiKey: d.GEMINI_API_KEY, model: d.GEMINI_MODEL, modelFast: d.GEMINI_MODEL_FAST, dailyLimit: d.AI_DAILY_CALL_LIMIT };
+  const fallbacks = d.GEMINI_MODEL_FALLBACKS?.split(",").map((x) => x.trim()).filter(Boolean);
+  return {
+    apiKey: d.GEMINI_API_KEY,
+    model: d.GEMINI_MODEL,
+    modelFast: d.GEMINI_MODEL_FAST,
+    modelFallbacks: fallbacks?.length ? fallbacks : undefined,
+    dailyLimit: d.AI_DAILY_CALL_LIMIT,
+  };
 }
 
 const dbSchema = z.object({ DATABASE_URL: req });

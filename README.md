@@ -79,7 +79,7 @@ Webhook events are ingested idempotently, with a throttled poll as backup (`/api
 
 ## AI usage
 
-Google Gemini through the Vercel AI SDK (`ai` v7, `@ai-sdk/google`). Two tiers, resolved from the model list unless pinned (`src/lib/ai/gemini.ts`): **quality** (newest stable "pro", or `GEMINI_MODEL`) writes the dispute case; **fast** (newest stable "flash", or `GEMINI_MODEL_FAST`) runs the gap explanations, the Agent Toolkit investigator and the shopper agent. Gemini 3+ models run at a low thinking level (thinking tokens count against the output budget). SDK retries are off (`maxRetries: 0`) so the daily cap counts real calls; an overloaded (503) call is retried once by the app, taking another cap slot.
+Google Gemini through the Vercel AI SDK (`ai` v7, `@ai-sdk/google`). Two tiers, resolved from the model list unless pinned (`src/lib/ai/gemini.ts`): **quality** (newest stable "pro", or `GEMINI_MODEL`) writes the dispute case; **fast** (newest stable "flash", or `GEMINI_MODEL_FAST`) runs the gap explanations, the Agent Toolkit investigator and the shopper agent. Gemini 3+ models run at a low thinking level (thinking tokens count against the output budget). SDK retries are off (`maxRetries: 0`) so the daily cap counts real calls; an overloaded (503) call is retried once by the app, taking another cap slot. Gemini's free tier allows about 20 requests per day per model, so a model refused for quota (429) is skipped until Gemini's retry time and the call moves to the next model (`GEMINI_MODEL_FALLBACKS`, else the newest stable flash-lite models).
 
 - **Structured output** (`generateObject`, zod schemas): the dispute case writer and plain-language protection-gap explanations.
 - **Tool calling** (`generateText` with tools): the shopper agent (`src/lib/agent/shopper-agent.ts`) and the Agent Toolkit investigator (`src/lib/defense/toolkit-gather.ts`).
@@ -113,7 +113,7 @@ npm run dev              # http://localhost:3000
 | `PAYPAL_WEBHOOK_ID` | `npx tsx scripts/register-webhook.ts https://<your-host>/api/webhooks/paypal` prints it |
 | `SANDBOX_BUYER_EMAIL`, `SANDBOX_BUYER_PASSWORD` | Dashboard, Testing Tools, Sandbox Accounts (personal account); shown on `/demo` |
 | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) |
-| `GEMINI_MODEL`, `GEMINI_MODEL_FAST`, `AI_DAILY_CALL_LIMIT` | Optional |
+| `GEMINI_MODEL`, `GEMINI_MODEL_FAST`, `GEMINI_MODEL_FALLBACKS`, `AI_DAILY_CALL_LIMIT` | Optional |
 | `DATABASE_URL` | [Neon](https://neon.tech) Postgres connection string |
 | `APP_BASE_URL` | Public URL, used for webhooks and return URLs |
 | `SHOPPER_AGENT_PRIVATE_JWK` | `npx tsx scripts/gen-agent-key.ts`; set it on hosted deployments |
@@ -123,7 +123,7 @@ npm run dev              # http://localhost:3000
 Tests, lint, build:
 
 ```bash
-npm test         # vitest, offline, in-memory Postgres: 403 tests in 43 files
+npm test         # vitest, offline, in-memory Postgres: 411 tests in 43 files
 npm run lint
 npm run build
 ```

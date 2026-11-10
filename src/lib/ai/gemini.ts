@@ -57,7 +57,7 @@ export function createDbUsageStore(db: Db, limit: number, now: () => Date = () =
   };
 }
 
-function isRateLimited(err: unknown): boolean {
+export function isRateLimited(err: unknown): boolean {
   const e = err as { statusCode?: number; status?: number; message?: string; lastError?: unknown } | null;
   if (!e || typeof e !== "object") return false;
   if (e.statusCode === 429 || e.status === 429) return true;
@@ -153,6 +153,75 @@ export function pickModel(models: ModelInfo[], tier: ModelTier = "quality"): str
   return newest(ids.filter(first)) ?? newest(ids.filter(second));
 }
 
+/** Newest stable flash-lite models other than the primary: each Gemini model has its own free-tier daily quota. */
+export function pickFallbacks(models: ModelInfo[], primary: string, max = 2): string[] {
+  let rest = models
+    .filter((x) => x.supportedGenerationMethods?.includes("generateContent"))
+    .map((x) => x.name.replace(/^models\//, ""))
+    .filter((id) => id !== primary && id.startsWith("gemini-") && /-flash-lite(-|$)/.test(id) && !EXCLUDED.some((w) => id.includes(w)) && version(id).length > 0);
+  const out: string[] = [];
+  while (rest.length > 0 && out.length < max) {
+    const n = newest(rest)!;
+    out.push(n);
+    rest = rest.filter((id) => id !== n);
+  }
+  return out;
+}
+
+// ---- Model fallback on quota ----
+// Live 2026-11-10: the free tier allows 20 requests per day PER MODEL (quota GenerateRequestsPerDayPerProjectPerModel-FreeTier).
+// Once gemini-3.5-flash was spent, every AI feature fell back to templates while the app's own cap still showed ~280 left.
+// A model Gemini refuses for quota (429) or no longer serves (404) is skipped until Gemini says to retry, and the next
+// candidate (GEMINI_MODEL_FALLBACKS, else the newest stable flash-lite models) takes the call.
+
+/** Model id -> epoch ms until which it is skipped. Per process. */
+export type BlockedModels = Map<string, number>;
+const blockedModels: BlockedModels = new Map();
+
+/** Gemini's "Please retry in 2h4m10.1s" (or "retryDelay": "7450s") as milliseconds. */
+export function parseRetryDelayMs(message: string): number | undefined {
+  const m = message.match(/retry in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i);
+  if (m && (m[1] || m[2] || m[3])) return Math.round(((Number(m[1] ?? 0) * 60 + Number(m[2] ?? 0)) * 60 + Number(m[3] ?? 0)) * 1000);
+  const d = message.match(/"retryDelay":\s*"([\d.]+)s"/);
+  return d ? Math.round(Number(d[1]) * 1000) : undefined;
+}
+
+function errorText(err: unknown): string {
+  const e = err as { message?: string; responseBody?: string; lastError?: unknown } | null;
+  if (!e || typeof e !== "object") return "";
+  return `${e.message ?? ""} ${e.responseBody ?? ""} ${e.lastError ? errorText(e.lastError) : ""}`;
+}
+
+function isNotFound(err: unknown): boolean {
+  const e = err as { statusCode?: number; status?: number; lastError?: unknown } | null;
+  if (!e || typeof e !== "object") return false;
+  return e.statusCode === 404 || e.status === 404 || (e.lastError ? isNotFound(e.lastError) : false);
+}
+
+/**
+ * Records a model failure. True when the error means "use another model" (quota 429 or 404): the model is then
+ * skipped until Gemini's retry time (429; 1 minute when none is given) or for a day (404). False for other errors.
+ */
+export function noteModelFailure(modelId: string, err: unknown, now = Date.now(), blocked: BlockedModels = blockedModels): boolean {
+  if (!modelId) return false;
+  if (isRateLimited(err)) {
+    blocked.set(modelId, now + (parseRetryDelayMs(errorText(err)) ?? 60_000));
+    return true;
+  }
+  if (isNotFound(err)) {
+    blocked.set(modelId, now + 24 * 3600_000);
+    return true;
+  }
+  return false;
+}
+
+/** Candidates in order, without the blocked ones. When every candidate is blocked, the primary alone (the call then fails fast). */
+export function availableModels(candidates: string[], now = Date.now(), blocked: BlockedModels = blockedModels): string[] {
+  const unique = [...new Set(candidates.filter(Boolean))];
+  const open = unique.filter((id) => (blocked.get(id) ?? 0) <= now);
+  return open.length > 0 ? open : unique.slice(0, 1);
+}
+
 /**
  * Per-call settings. maxRetries 0: the daily cap counts real model calls, so the SDK must not retry behind it.
  * Thinking tokens count against maxOutputTokens: Gemini 3+ models (flash too) think by default and, live on
@@ -214,22 +283,57 @@ const resolveFor = (tier: ModelTier) => {
   return resolveModel({ apiKey: cfg.apiKey, tier, model: cfg.model, modelFast: cfg.modelFast });
 };
 
+/** The tier's model followed by its quota fallbacks, minus the models Gemini is currently refusing. */
+export async function candidateModels(tier: ModelTier): Promise<string[]> {
+  const cfg = getAiConfig();
+  const primary = await resolveFor(tier);
+  let fallbacks = cfg.modelFallbacks;
+  if (!fallbacks) {
+    try {
+      if (!modelCache.models) modelCache.models = await listModels(cfg.apiKey, fetch);
+      fallbacks = pickFallbacks(modelCache.models, primary);
+    } catch {
+      fallbacks = [];
+    }
+  }
+  return availableModels([primary, ...fallbacks]);
+}
+
 // ---- Production wiring (lazy: nothing reads env at import time) ----
 
 const generateWithGemini: Generate = async ({ system, user, schema: s, maxTokens, tier }) => {
   const cfg = getAiConfig();
-  const modelId = await resolveFor(tier);
   const google = createGoogleGenerativeAI({ apiKey: cfg.apiKey });
-  const { object } = await generateObject({
-    model: google(modelId),
-    schema: s,
-    system,
-    prompt: user,
-    maxOutputTokens: maxTokens,
-    ...generationOptions(modelId),
+  return generateWithFallback(await candidateModels(tier), async (modelId) => {
+    const { object } = await generateObject({
+      model: google(modelId),
+      schema: s,
+      system,
+      prompt: user,
+      maxOutputTokens: maxTokens,
+      ...generationOptions(modelId),
+    });
+    return object;
   });
-  return object;
 };
+
+/** Tries each model in turn while Gemini refuses them for quota (429) or as unknown (404); other errors are thrown at once. */
+export async function generateWithFallback<T>(
+  modelIds: string[],
+  call: (modelId: string) => Promise<T>,
+  note: (modelId: string, err: unknown) => boolean = (id, err) => noteModelFailure(id, err),
+): Promise<T> {
+  let last: unknown = new Error("No Gemini model available");
+  for (const id of modelIds) {
+    try {
+      return await call(id);
+    } catch (err) {
+      if (!note(id, err)) throw err;
+      last = err;
+    }
+  }
+  throw last;
+}
 
 let defaultAi: ReturnType<typeof createAi> | undefined;
 function getDefaultAi() {
@@ -265,8 +369,17 @@ export async function tryConsumeAiCall(): Promise<boolean> {
 /** Settings every tool-loop generateText call spreads in: no SDK retries (the cap counts real calls). */
 export const TOOL_LOOP_OPTIONS = { maxRetries: 0 } as const;
 
-/** The Gemini model for tool-calling loops (toolkit gather, shopper agent): the fast tier by default. */
+/**
+ * The Gemini model for tool-calling loops (toolkit gather, shopper agent): the fast tier by default, or its first
+ * fallback while Gemini refuses it. A loop that gets a 429/404 calls noteModelFailure and loads the model again.
+ */
 export async function getGeminiModel(tier: ModelTier = "fast") {
   const cfg = getAiConfig();
-  return createGoogleGenerativeAI({ apiKey: cfg.apiKey })(await resolveFor(tier));
+  return createGoogleGenerativeAI({ apiKey: cfg.apiKey })((await candidateModels(tier))[0]);
+}
+
+/** The id of a model returned by getGeminiModel (or a test double); "" when it has none. */
+export function modelIdOf(model: unknown): string {
+  const id = (model as { modelId?: unknown } | null)?.modelId;
+  return typeof id === "string" ? id : "";
 }

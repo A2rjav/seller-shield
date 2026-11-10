@@ -1,5 +1,5 @@
 import { generateText, stepCountIs, tool } from "ai";
-import { getGeminiModel, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
+import { getGeminiModel, modelIdOf, noteModelFailure, TOOL_LOOP_OPTIONS, tryConsumeAiCall } from "@/lib/ai/gemini";
 import { getPaypalConfig } from "@/lib/env";
 import { toCents } from "@/lib/money";
 import { getDispute as restGetDispute, type PaypalDispute } from "@/lib/paypal/disputes";
@@ -195,6 +195,8 @@ export function createToolkitAgent(deps: {
   consume: () => Promise<boolean>;
   loadTools: () => Promise<Record<string, LegacyTool>>;
   loadModel: () => Promise<unknown>;
+  /** Records a 429/404 so the next loadModel picks a fallback model; true when switching models may help. */
+  noteFailure?: (modelId: string, err: unknown) => boolean;
 }): RunAgent {
   return async ({ disputeId, orderId }) => {
     const calls: ToolCall[] = [];
@@ -216,8 +218,10 @@ export function createToolkitAgent(deps: {
           },
         } as never);
       }
-      await generateText({
-        model: await deps.loadModel(),
+      const note = deps.noteFailure ?? ((id: string, e: unknown) => noteModelFailure(id, e));
+      let model = await deps.loadModel();
+      const loop = () => generateText({
+        model,
         ...TOOL_LOOP_OPTIONS,
         tools,
         stopWhen: stepCountIs(MAX_AGENT_STEPS),
@@ -228,6 +232,14 @@ export function createToolkitAgent(deps: {
         system: "You gather PayPal-side facts for a dispute. Call the tools; do not summarise. Never invent ids.",
         prompt: `Call get_dispute for dispute ${disputeId}.${orderId ? ` Then call get_order for order ${orderId}, and get_shipment_tracking with order_id ${orderId} and the seller transaction id from the dispute.` : ""}`,
       } as never);
+      try {
+        await loop();
+      } catch (err) {
+        // A model out of daily quota (429) or gone (404): once, before any tool ran, on the next fallback model.
+        if (calls.length > 0 || !note(modelIdOf(model), err)) throw err;
+        model = await deps.loadModel();
+        await loop();
+      }
       return { ok: true, calls };
     } catch {
       return calls.length > 0 ? { ok: true, calls } : { ok: false };

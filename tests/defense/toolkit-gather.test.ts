@@ -134,6 +134,24 @@ describe("createToolkitAgent", () => {
     expect(calls).toBe(1);
   });
 
+  it("on a model out of daily quota (429) reruns once on the fallback model before any tool ran", async () => {
+    const { APICallError } = await import("ai");
+    const quota = new MockLanguageModelV4({
+      modelId: "gemini-primary",
+      doGenerate: (async () => {
+        throw new APICallError({ message: "quota", url: "u", requestBodyValues: {}, statusCode: 429, isRetryable: true });
+      }) as never,
+    });
+    const h = harness(10, [callStep("get_dispute", { dispute_id: "PP-D-77" }), textStep]);
+    const loadModel = vi.fn().mockResolvedValueOnce(quota).mockResolvedValueOnce(h.model);
+    const noteFailure = vi.fn(() => true);
+    const tools = { get_dispute: { description: "d", parameters: z.object({ dispute_id: z.string() }), execute: async () => JSON.stringify(dispute) } };
+    const agent = createToolkitAgent({ consume: async () => true, loadTools: async () => tools, loadModel, noteFailure });
+    const r = await agent({ disputeId: "PP-D-77" });
+    expect(noteFailure).toHaveBeenCalledWith("gemini-primary", expect.anything());
+    expect(r.ok && r.calls.map((c) => c.tool)).toEqual(["get_dispute"]);
+  });
+
   it("never runs more than 4 steps", async () => {
     const h = harness(100, Array.from({ length: 10 }, () => callStep("get_dispute", { dispute_id: "PP-D-77" })));
     await h.agent({ disputeId: "PP-D-77" });

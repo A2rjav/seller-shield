@@ -150,6 +150,36 @@ describe("runShopperChat retries", () => {
     expect(createOrder).toHaveBeenCalledTimes(1);
   });
 
+  it("on a model out of daily quota (429) switches once to the fallback model, without pausing", async () => {
+    const { MockLanguageModelV4 } = await import("ai/test");
+    const { APICallError } = await import("ai");
+    const { db, s, checkoutDeps, agentSigner, createOrder } = await mk();
+    const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
+    const quota = new MockLanguageModelV4({
+      modelId: "gemini-primary",
+      doGenerate: (async () => {
+        throw new APICallError({ message: "You exceeded your current quota. Please retry in 2h4m10s.", url: "u", requestBodyValues: {}, statusCode: 429, isRetryable: true });
+      }) as never,
+    });
+    const steps = [
+      { content: [{ type: "tool-call", toolCallId: "c1", toolName: "checkout", input: JSON.stringify({ items: [{ sku: "silver-hoops", qty: 1 }] }) }], finishReason: { unified: "tool-calls", raw: "tool-calls" }, usage, warnings: [] },
+      { content: [{ type: "text", text: "Approve it in PayPal." }], finishReason: { unified: "stop", raw: "stop" }, usage, warnings: [] },
+    ];
+    const lite = new MockLanguageModelV4({ modelId: "gemini-lite", doGenerate: steps as never });
+    const loadModel = vi.fn().mockResolvedValueOnce(quota).mockResolvedValueOnce(lite);
+    const noteFailure = vi.fn(() => true);
+    const sleep = vi.fn(async () => {});
+    const r = await runShopperChat(
+      { db, shopperJws: s.shopperJws, messages: [{ role: "user", content: "buy" }] },
+      { consume: async () => true, loadModel, noteFailure, checkoutDeps, agentSigner, sleep },
+    );
+    expect(r).toMatchObject({ text: "Approve it in PayPal.", events: [expect.objectContaining({ type: "checkout" })] });
+    expect(noteFailure).toHaveBeenCalledWith("gemini-primary", expect.anything());
+    expect(loadModel).toHaveBeenCalledTimes(2);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(createOrder).toHaveBeenCalledTimes(1);
+  });
+
   it("does not retry other model errors", async () => {
     const { MockLanguageModelV4 } = await import("ai/test");
     const { db, s, checkoutDeps, agentSigner } = await mk();
