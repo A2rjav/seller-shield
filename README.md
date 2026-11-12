@@ -3,7 +3,7 @@
 **An AI copilot that keeps small PayPal sellers' money safe from disputes, including "my AI bought it, not me".**
 
 Live demo: https://seller-shield-id5n.onrender.com
-Video: <YOUTUBE_URL>
+Video: https://youtu.be/bWMslONKa5o
 
 Built for the [PayPal AI Hackathon](https://paypalaihackathon.devpost.com/). PayPal sandbox only, fake money. MIT licensed.
 
