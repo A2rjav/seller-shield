@@ -126,14 +126,27 @@ describe("seedDemo with tracking already on PayPal (live sandbox data)", () => {
     expect(s).toMatchObject({ carrier: "UPS", trackingNumber: "1Z999AA10123456784", pushedToPaypal: true, pushSimulated: false, status: "delivered" });
   });
 
-  it("warns when a tracking_not_pushed order already has PayPal tracking", async () => {
+  it("gives a tracking_not_pushed order a fresh unpushed simulated shipment even when PayPal holds a tracker, also after a pushed one", async () => {
     const db = await createTestDb();
-    const r = await seedDemo(db, {
+    const deps = {
       getOrder: async (id: string) => withTrackers(id, { number: "9400100000000000000000" }),
       addTracking: async () => {},
-      entries: [{ orderId: "O-NP", scenario: "tracking_not_pushed" }],
-    });
-    expect(r.warnings.join(" ")).toMatch(/already holds tracking/);
+      entries: [{ orderId: "O-NP", scenario: "tracking_not_pushed" as const }],
+    };
+    const r = await seedDemo(db, deps);
+    expect(r.warnings).toEqual([]);
+    const [s] = await db.select().from(shipments).where(eq(shipments.orderId, "O-NP"));
+    expect(s).toMatchObject({ simulated: true, pushedToPaypal: false });
+    expect(s.trackingNumber).not.toBe("9400100000000000000000");
+    // A shipment pushed in the meantime is replaced by a new unpushed one on the next seed.
+    await db.update(shipments).set({ pushedToPaypal: true }).where(eq(shipments.orderId, "O-NP"));
+    expect((await seedDemo(db, deps)).warnings).toEqual([]);
+    const rows = await db.select().from(shipments).where(eq(shipments.orderId, "O-NP"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ simulated: true, pushedToPaypal: false });
+    expect(rows[0].id).not.toBe(s.id);
+    const [chk] = await db.select().from(protectionChecks).where(eq(protectionChecks.orderId, "O-NP"));
+    expect(JSON.stringify(chk)).toContain("tracking_not_on_paypal");
   });
 });
 

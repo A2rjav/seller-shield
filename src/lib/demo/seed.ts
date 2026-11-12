@@ -63,9 +63,6 @@ async function applyScenario(db: Db, entry: BaselineEntry, deps: SeedDeps, warni
   const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
   const carrier = scenario === "awaiting_delivery_850" ? "UPS" : "USPS";
   const onPaypal = readTrackers(paypalOrder)[0];
-  if (onPaypal && scenario === "tracking_not_pushed") {
-    warnings.push(`${orderId}: PayPal already holds tracking for this order, so it cannot demonstrate "tracking not pushed". Use an order without tracking.`);
-  }
   // Scenario tracking numbers are made up by the demo, and delivery is simulated, so these shipments stay flagged simulated.
   const ship = async (shipTo?: Address) => {
     const existing = await currentShipment(db, orderId);
@@ -114,9 +111,13 @@ async function applyScenario(db: Db, entry: BaselineEntry, deps: SeedDeps, warni
       if (s.status !== "in_transit") await inTransit(s.id);
       break;
     }
-    case "tracking_not_pushed":
+    case "tracking_not_pushed": {
+      // Never adopt PayPal's tracker here: the scenario needs a current shipment that is NOT on PayPal. A pushed one is replaced by a fresh simulated number.
+      const cur = await currentShipment(db, orderId);
+      if (cur?.pushedToPaypal) await db.delete(shipments).where(eq(shipments.orderId, orderId));
       await ship();
       break;
+    }
     case "dispute_item_not_received": {
       const s = await ship();
       await push(s);
