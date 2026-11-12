@@ -1,0 +1,12 @@
+# Render's free plan sleeps after ~15 idle minutes (first request then takes ~50 s).
+# Ping the health endpoint during the judging window so judges get a warm demo.
+name: keep demo warm
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsS -m 90 https://seller-shield-id5n.onrender.com/api/health
